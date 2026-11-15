@@ -1,0 +1,2 @@
+class SkipStage(Exception):
+    pass

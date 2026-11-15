@@ -1,0 +1,19 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Видео, найденные данные, метаданные и исправления
+backend/data/
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+
+# Секреты
+.env
+.env.*
+!.env.example
+
+# Локальные файлы
+*.log
