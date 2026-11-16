@@ -3,6 +3,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Callable
 
+from uuid import uuid4
 from app.observations import observation
 from app.utils.packages import package_version
 from app.utils.paths import relative
@@ -44,7 +45,7 @@ def extract_ocr(
 
         progress(
             percent,
-            f"OCR: кадр {index + 1} из {total}",
+            f"Ищу текст на кадрах {index + 1} из {total}",
         )
         frame = run_folder / f"frame_{index:03d}.jpg"
         extract_frame(video, frame, timestamp)
@@ -68,7 +69,9 @@ def extract_ocr(
             "timestamp": timestamp,
             "artifact": frame_relative,
         })
-
+        
+    progress(100.0, "Поиск текста на кадрах завершён")
+    
     return {
         "frames": frames,
         "observations": observations,
@@ -180,10 +183,21 @@ def _save_crop(
     polygon,
     index: int,
 ) -> Path:
-    left, top, right, bottom = _pixel_bbox(image, polygon)
-    crop = run_folder / f"crop_{index:03d}.jpg"
+    left, top, right, bottom = _pixel_bbox(
+        image,
+        polygon,
+    )
 
-    image.crop((left, top, right, bottom)).convert("RGB").save(crop)
+    # У каждого изображения-фрагмента уникальное имя.
+    # Фрагменты разных кадров больше не перезаписываются.
+    crop = run_folder / (
+        f"crop_{index:03d}_{uuid4().hex}.jpg"
+    )
+
+    image.crop(
+        (left, top, right, bottom)
+    ).convert("RGB").save(crop)
+
     return crop
 
 

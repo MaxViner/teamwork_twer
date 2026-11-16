@@ -3,7 +3,7 @@ import shutil
 from contextlib import asynccontextmanager
 from pathlib import Path
 from uuid import uuid4
-
+from app.reporting import render_report
 from app.executor import POOL, schedule
 from app.jobs import (
     DATA,
@@ -194,8 +194,21 @@ def retry_stage(job_id: str, stage: str):
 
     if stage == "prepare":
         selected = list(STAGES)
+
     elif stage == "scenes":
-        selected = ["scenes", "ocr"]
+        selected = [
+            "scenes",
+            "ocr",
+            "visual",
+            "structure",
+        ]
+
+    elif stage == "visual":
+        selected = [
+            "visual",
+            "structure",
+        ]
+
     else:
         selected = [stage]
 
@@ -271,3 +284,41 @@ def delete_job(job_id: str):
         shutil.rmtree(job_folder(job_id))
 
     return {"status": "deleted"}
+
+@appServer.get("/api/jobs/{job_id}/report")
+def export_markdown_report(job_id: str):
+    with LOCK:
+        job = load_job(job_id)
+
+        if job["status"] in ("queued", "running"):
+            raise HTTPException(
+                409,
+                "Дождитесь завершения обработки "
+                "перед формированием отчёта.",
+            )
+
+        report = render_report(job)
+
+        folder = job_folder(job_id)
+        destination = folder / "report.md"
+        temporary = folder / "report.md.tmp"
+
+        temporary.write_text(
+            report,
+            encoding="utf-8",
+        )
+
+        temporary.replace(destination)
+
+    # Отдаём снимок содержимого, а не общий изменяемый файл.
+    from fastapi.responses import Response
+
+    return Response(
+        content=report.encode("utf-8"),
+        media_type="text/markdown",
+        headers={
+            "Content-Disposition": (
+                'attachment; filename="report.md"'
+            ),
+        },
+    )

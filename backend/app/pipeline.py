@@ -6,7 +6,11 @@ from app.stages.ocr import extract_ocr
 from app.stages.prepare import prepare
 from app.stages.scenes import extract_scenes
 from app.stages.speech import extract_speech
-
+from app.stages.context import (
+    extract_visual,
+    extract_audio_events,
+    extract_structure,
+)
 
 STAGES = (
     "prepare",
@@ -14,6 +18,9 @@ STAGES = (
     "scenes",
     "speech",
     "ocr",
+    "visual",
+    "audio_events",
+    "structure",
 )
 
 
@@ -49,6 +56,30 @@ def run_stage(
             prepared["duration"],
             stages,
             options,
+            progress,
+        ),
+                "visual": lambda: extract_visual(
+            folder,
+            run_folder,
+            video,
+            prepared,
+            stages,
+            options,
+            progress,
+        ),
+
+        "audio_events": lambda: extract_audio_events(
+            folder,
+            run_folder,
+            video,
+            prepared,
+            progress,
+        ),
+
+        "structure": lambda: extract_structure(
+            folder,
+            run_folder,
+            stages,
             progress,
         ),
     }

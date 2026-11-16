@@ -70,9 +70,30 @@ export default function App() {
             <div className="section-row">
               <div><h2>{job.name}</h2><p className="muted">{job.status} · {job.progress}</p></div>
               <div className="toolbar">
-                <a className="button-link" href={`/api/jobs/${job.id}/export`}>Экспорт JSON</a>
-                <button className="danger" disabled={busy} onClick={handleRemove}>Удалить</button>
-              </div>
+                    {!busy && (
+                      <a
+                        className="button-link"
+                        href={`/api/jobs/${job.id}/report`}
+                      >
+                        Скачать отчёт.md
+                      </a>
+                    )}
+
+                    <a
+                      className="button-link"
+                      href={`/api/jobs/${job.id}/export`}
+                    >
+                      Экспорт JSON
+                    </a>
+
+                    <button
+                      className="danger"
+                      disabled={busy}
+                      onClick={handleRemove}
+                    >
+                      Удалить
+                    </button>
+                  </div>
             </div>
             <StageGrid job={job} busy={busy} onRetry={handleRetry} />
           </section>

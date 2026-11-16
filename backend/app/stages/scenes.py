@@ -10,14 +10,24 @@ def extract_scenes(
     run_folder: Path,
     video: Path,
     duration: float,
-    progress: Callable[[str], None],
+    progress: Callable[[float, str], None],
 ) -> dict:
-    from scenedetect import ContentDetector, detect
+    progress(0.0, "Ищу смены сцен")
 
-    progress("Ищу смены сцен")
+    intervals = _detect_intervals(
+        video,
+        duration,
+    )
 
-    intervals = _detect_intervals(video, duration)
-    observations = _build_observations(duration, intervals)
+    observations = _build_observations(
+        duration,
+        intervals,
+    )
+
+    progress(
+        100.0,
+        f"Найдено сцен: {len(intervals)}",
+    )
 
     return {
         "intervals": intervals,
@@ -25,7 +35,10 @@ def extract_scenes(
     }
 
 
-def _detect_intervals(video: Path, duration: float) -> list[list[float]]:
+def _detect_intervals(
+    video: Path,
+    duration: float,
+) -> list[list[float]]:
     from scenedetect import ContentDetector, detect
 
     detected = detect(
@@ -35,7 +48,10 @@ def _detect_intervals(video: Path, duration: float) -> list[list[float]]:
     )
 
     intervals = [
-        [start.get_seconds(), end.get_seconds()]
+        [
+            start.get_seconds(),
+            end.get_seconds(),
+        ]
         for start, end in detected
     ]
 
@@ -49,12 +65,14 @@ def _build_observations(
     return [
         observation(
             source="scene",
-            start=max(0, start),
+            start=max(0.0, start),
             end=min(duration, end),
             text=f"Сцена {index + 1}",
             extractor="PySceneDetect",
             data={
-                "version": package_version("scenedetect"),
+                "version": package_version(
+                    "scenedetect"
+                ),
                 "time_is_approximate": True,
             },
         )

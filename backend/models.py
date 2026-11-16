@@ -15,12 +15,27 @@ class AnalyzeOptions(BaseModel):
     max_frames: int = Field(default=12, ge=1, le=50)
     whisper_model: Literal["tiny", "base", "small", "medium"] = "small"
 
+    visual: bool = False
+    audio_events: bool = False
+    structure: bool = True
+    visual_frames: int = Field(default=5, ge=1, le=50)
 
 class Observation(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     id: str = Field(default_factory=lambda: uuid4().hex)
-    source: Literal["technical", "metadata", "scene", "speech", "ocr"]
+    source: Literal[
+        "technical",
+        "metadata",
+        "scene",
+        "speech",
+        "ocr",
+        "visual",
+        "relation",
+        "audio_event",
+        "sequence",
+        "reappearance",
+    ]
     start: float = Field(default=0, ge=0, allow_inf_nan=False)
     end: float = Field(default=0, ge=0, allow_inf_nan=False)
     text: str
@@ -41,3 +56,17 @@ class ReviewPatch(BaseModel):
 
     text: str = Field(max_length=20000)
     review: Literal["unreviewed", "accepted", "rejected"]
+
+
+    # Тяжёлые модели запускаются только по явному выбору.
+    visual: bool = False
+    audio_events: bool = False
+
+    # Структурный анализ не требует отдельной нейросети.
+    structure: bool = True
+
+    visual_frames: int = Field(
+        default=6,
+        ge=1,
+        le=40,
+    )

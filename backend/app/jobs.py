@@ -109,7 +109,23 @@ def set_stage_progress(
 
 
 def stage_enabled(stage: str, options: dict) -> bool:
-    if stage in ("metadata", "speech", "ocr"):
-        return bool(options[stage])
+    if stage == "metadata":
+        # В текущей задаче GPS и метаданные не анализируем.
+        return False
+
+    defaults = {
+        "speech": True,
+        "ocr": True,
+        "visual": False,
+        "audio_events": False,
+        "structure": True,
+    }
+
+    if stage in defaults:
+        return bool(
+            options.get(stage, defaults[stage])
+        )
 
     return True
+
+ 

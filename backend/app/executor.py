@@ -168,12 +168,14 @@ def _finish_job(job_id: str) -> None:
             status = "partial"
         else:
             status = "completed"
-
+            
+        job["progress_percent"] = 100.0
         job.update(
             status=status,
             progress="Обработка завершена",
         )
-
+   
+    
     mutate_job(job_id, finish)
 
 

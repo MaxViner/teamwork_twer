@@ -8,9 +8,12 @@ PREVIEW_PRESET = "veryfast"
 OCR_LANGUAGES = ("ru", "en")
 
 STAGE_WEIGHTS = {
-    "prepare": 45,
-    "metadata": 2,
-    "scenes": 8,
-    "speech": 25,
-    "ocr": 20,
+    "prepare": 25,
+    "metadata": 0,
+    "scenes": 5,
+    "speech": 15,
+    "ocr": 15,
+    "visual": 25,
+    "audio_events": 10,
+    "structure": 5,
 }
