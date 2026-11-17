@@ -1,3 +1,10 @@
+"""Распознавание речи.
+
+Из превью извлекается аудио (WAV 16 кГц), модель faster-whisper
+переводит речь в текст с таймкодами. Каждый непустой фрагмент
+становится наблюдением с языком и уверенностью распознавания.
+"""
+
 from functools import lru_cache
 from pathlib import Path
 from typing import Callable
@@ -34,12 +41,20 @@ def extract_speech(
 
     audio = run_folder / "audio.wav"
 
-    progress(0.0, "Извлекаю аудио")
+    progress(1.0, "Извлекаю аудио")
     extract_audio(video, audio)
 
-    progress(0.0, "Загружаю Whisper и распознаю речь")
+    progress(
+        5.0,
+        "Аудио готово, загружаю модель Whisper",
+    )
 
     model = speech_model(options["whisper_model"])
+
+    progress(
+        10.0,
+        "Модель загружена, начинаю распознавание",
+    )
 
     segments, info = model.transcribe(
         str(audio),
@@ -54,8 +69,11 @@ def extract_speech(
 
     for segment in segments:
         percent = min(
-            100.0,
-            float(segment.end) / duration * 100,
+            99.0,
+            10.0
+            + float(segment.end)
+            / max(duration, 0.001)
+            * 89.0,
         )
 
         progress(

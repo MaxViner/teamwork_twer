@@ -1,9 +1,17 @@
+"""Текст на кадрах (OCR).
+
+Выбирает равномерные моменты видео и середины сцен, сохраняет кадры,
+EasyOCR распознаёт русский и английский текст. Для каждой надписи
+сохраняется вырезка, координаты рамки и оценка уверенности.
+"""
+
 import math
 from functools import lru_cache
 from pathlib import Path
 from typing import Callable
 
 from uuid import uuid4
+from app.media.frames import select_timestamps
 from app.observations import observation
 from app.utils.packages import package_version
 from app.utils.paths import relative
@@ -26,14 +34,14 @@ def extract_ocr(
     duration: float,
     stages: dict,
     options: dict,
-    progress: Callable[[str], None],
+    progress: Callable[[float, str], None],
 ) -> dict:
     from PIL import Image
 
     from app.media.ffmpeg import extract_frame
 
     count = options["max_frames"]
-    times = _select_timestamps(duration, count, stages)
+    times = select_timestamps(duration, count, stages)
 
     reader = ocr_reader()
     observations = []
@@ -76,55 +84,6 @@ def extract_ocr(
         "frames": frames,
         "observations": observations,
     }
-
-
-def _select_timestamps(
-    duration: float,
-    count: int,
-    stages: dict,
-) -> list[float]:
-    times = [
-        duration * (index + 0.5) / count
-        for index in range(count)
-    ]
-
-    times.extend(_scene_centers(stages))
-
-    times = sorted({
-        round(min(max(0, value), duration * 0.999), 6)
-        for value in times
-    })
-
-    return _limit_timestamps(times, count)
-
-
-def _scene_centers(stages: dict) -> list[float]:
-    scene_stage = stages["scenes"]
-
-    if scene_stage["status"] != "completed":
-        return []
-
-    intervals = scene_stage["result"].get("intervals", [])
-
-    return [
-        (start + end) / 2
-        for start, end in intervals
-    ]
-
-
-def _limit_timestamps(times: list[float], count: int) -> list[float]:
-    if len(times) <= count:
-        return times
-
-    return [
-        times[
-            min(
-                len(times) - 1,
-                int((index + 0.5) * len(times) / count),
-            )
-        ]
-        for index in range(count)
-    ]
 
 
 def _build_text_observations(

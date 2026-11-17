@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { fetchJob } from "../api/jobs.js";
 
-export function useJobPolling({ jobId, onError, intervalMs = 2000 }) {
+export function useJobPolling({ jobId, onError, intervalMs = 1000 }) {
   const [job, setJob] = useState(null);
 
   useEffect(() => {

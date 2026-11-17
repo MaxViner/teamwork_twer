@@ -1,0 +1,98 @@
+@media (max-width: 1100px) {
+    .workspace {
+        grid-template-columns: 1fr;
+    }
+
+
+    .player-panel {
+        position: static;
+    }
+
+
+    .dossier-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+
+@media (max-width: 640px) {
+    .app {
+        width: 94%;
+        padding-top: 22px;
+    }
+
+
+    .panel {
+        padding: 18px;
+        border-radius: 18px;
+    }
+
+
+    .page-header,
+    .section-row {
+        align-items: flex-start;
+        flex-direction: column;
+    }
+
+
+    .form-grid {
+        grid-template-columns: 1fr;
+    }
+
+
+    .frame-grid {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+
+    .finding-actions {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+
+    .stage-grid > .stage {
+        gap: 13px;
+        padding: 17px;
+        border-radius: 16px;
+    }
+
+
+    .stage-indicator {
+        flex-basis: 36px;
+        width: 36px;
+        height: 36px;
+    }
+
+
+    .stage-status-icon {
+        width: 21px;
+        height: 21px;
+    }
+
+
+    .stage-heading {
+        flex-wrap: wrap;
+        gap: 8px;
+    }
+
+
+    .stage-heading h3 {
+        font-size: 15px;
+    }
+}
+
+
+@media (prefers-reduced-motion: reduce) {
+    .stage-spinner {
+        animation: none;
+    }
+
+
+    .stage-grid > .stage,
+    .frame,
+    button,
+    .button-link {
+        transition: none;
+    }
+}

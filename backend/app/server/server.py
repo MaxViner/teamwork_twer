@@ -1,9 +1,26 @@
+"""FastAPI-приложение и маршруты API.
+
+Принимает видео, создаёт задание, отдаёт статус и прогресс,
+позволяет править наблюдения, запускать выбранные этапы,
+скачивать артефакты и готовый Markdown-отчёт.
+"""
+
 import json
 import shutil
 from contextlib import asynccontextmanager
 from pathlib import Path
 from uuid import uuid4
-from app.reporting import render_report
+
+from fastapi import (
+    FastAPI,
+    File,
+    Form,
+    HTTPException,
+    UploadFile,
+)
+from fastapi.responses import FileResponse
+from pydantic import ValidationError
+
 from app.executor import POOL, schedule
 from app.jobs import (
     DATA,
@@ -15,17 +32,9 @@ from app.jobs import (
     save_job,
     stage_enabled,
 )
+from app.models import AnalyzeOptions, ReviewPatch
 from app.pipeline import STAGES
-from fastapi import (
-    FastAPI,
-    File,
-    Form,
-    HTTPException,
-    UploadFile,
-)
-from fastapi.responses import FileResponse
-from models import AnalyzeOptions, ReviewPatch
-from pydantic import ValidationError
+from app.reporting import render_report
 
 MAX_UPLOAD_BYTES = 1024 * 1024 * 1024
 
@@ -173,15 +182,24 @@ def get_job(job_id: str):
 @appServer.post("/api/jobs/{job_id}/retry/{stage}", status_code=202)
 def retry_stage(job_id: str, stage: str):
     if stage not in STAGES:
-        raise HTTPException(404, "Этап не найден.")
+        raise HTTPException(
+            404,
+            "Этап не найден.",
+        )
+
+
 
     job = load_job(job_id)
+
+
 
     if not stage_enabled(stage, job["options"]):
         raise HTTPException(
             400,
             "Этап отключён. Создайте задание с другими настройками.",
         )
+
+
 
     if (
         stage != "prepare"
@@ -192,30 +210,94 @@ def retry_stage(job_id: str, stage: str):
             "Сначала повторите подготовку видео.",
         )
 
+
+
     if stage == "prepare":
         selected = list(STAGES)
+
 
     elif stage == "scenes":
         selected = [
             "scenes",
             "ocr",
-            "visual",
             "structure",
+            "scene_objects",
+            "visual_profile",
+            "road_geometry",
+            "location_evidence",
         ]
 
-    elif stage == "visual":
+
+    elif stage == "ocr":
         selected = [
-            "visual",
+            "ocr",
             "structure",
+            "scene_objects",
+            "visual_profile",
+            "road_geometry",
+            "location_evidence",
         ]
+
+
+    elif stage == "structure":
+        selected = [
+            "structure",
+            "location_evidence",
+        ]
+
+
+    elif stage == "scene_objects":
+        selected = [
+            "scene_objects",
+            "location_evidence",
+        ]
+
+
+    elif stage == "visual_profile":
+        selected = [
+            "visual_profile",
+            "location_evidence",
+        ]
+
+
+    elif stage == "road_geometry":
+        selected = [
+            "road_geometry",
+            "location_evidence",
+        ]
+
+
+    elif stage == "speech":
+        selected = [
+            "speech",
+            "location_evidence",
+        ]
+
+
+    elif stage == "audio_structure":
+        selected = [
+            "audio_structure",
+            "location_evidence",
+        ]
+
+
+    elif stage == "metadata":
+        selected = [
+            "metadata",
+            "location_evidence",
+        ]
+
 
     else:
         selected = [stage]
 
+
+
     schedule(job_id, selected)
 
-    return {"status": "queued"}
 
+
+    return {"status": "queued"}
 
 @appServer.patch("/api/jobs/{job_id}/observations/{observation_id}")
 def review_observation(
@@ -322,3 +404,4 @@ def export_markdown_report(job_id: str):
             ),
         },
     )
+

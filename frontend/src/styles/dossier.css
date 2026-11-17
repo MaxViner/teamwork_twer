@@ -1,0 +1,131 @@
+.dossier-summary {
+    margin: 16px 0 20px;
+    color: var(--text-secondary);
+    line-height: 1.65;
+}
+
+
+.dossier-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px;
+}
+
+
+.dossier-card {
+    padding: 18px;
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    background: rgba(255, 255, 255, 0.03);
+    min-width: 0;
+}
+
+
+.dossier-card h3 {
+    margin-bottom: 12px;
+}
+
+
+.dossier-card p {
+    margin-bottom: 10px;
+    line-height: 1.55;
+    overflow-wrap: anywhere;
+}
+
+
+.dossier-line span {
+    color: var(--text-secondary);
+}
+
+
+.dossier-link {
+    color: var(--accent-strong);
+    text-decoration: none;
+    font-variant-numeric: tabular-nums;
+}
+
+
+.dossier-link:hover {
+    text-decoration: underline;
+}
+
+
+.dossier-country {
+    margin-bottom: 14px;
+}
+
+
+.dossier-country-head {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 6px;
+    font-size: 14px;
+}
+
+
+.dossier-bar {
+    height: 7px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.08);
+    overflow: hidden;
+}
+
+
+.dossier-bar span {
+    display: block;
+    height: 100%;
+    border-radius: 999px;
+    background: linear-gradient(
+        90deg,
+        var(--accent-strong),
+        var(--accent)
+    );
+}
+
+
+.dossier-signals {
+    margin: 8px 0 0;
+    padding-left: 18px;
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.55;
+}
+
+
+.dossier-queries {
+    margin-top: 20px;
+}
+
+
+.dossier-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-top: 10px;
+}
+
+
+.dossier-chip {
+    display: inline-block;
+    padding: 8px 13px;
+    border: 1px solid var(--accent-border);
+    border-radius: 999px;
+    background: var(--accent-soft);
+    color: var(--accent-strong);
+    font-size: 12px;
+    text-decoration: none;
+    max-width: 100%;
+    overflow-wrap: anywhere;
+}
+
+
+.dossier-chip:hover {
+    background: rgba(255, 138, 61, 0.22);
+}
+
+
+.dossier-limitations {
+    margin-top: 18px;
+    margin-bottom: 0;
+}

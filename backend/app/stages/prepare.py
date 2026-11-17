@@ -1,6 +1,12 @@
+"""Подготовка видео к анализу.
+
+Проверяет ffmpeg/ffprobe, читает длительность и разрешение исходника,
+считает SHA-256 файла и перекодирует видео в лёгкий MP4-превью.
+Дальше все этапы работают уже с превью, а не с оригиналом.
+"""
+
 from pathlib import Path
 from typing import Callable
-
 
 from app.config import MAX_DURATION_SECONDS, MAX_SOURCE_PIXELS
 from app.media.ffmpeg import make_preview_with_progress

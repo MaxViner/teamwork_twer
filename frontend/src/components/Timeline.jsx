@@ -1,11 +1,45 @@
 import { formatTime } from "../utils/formatTime.js";
 
-export default function Timeline({ observations, duration, onSeek }) {
+
+export default function Timeline({
+  observations,
+  sceneIntervals = [],
+  duration,
+  onSeek,
+}) {
+  const position = (start) => (
+    duration
+      ? Math.min(99, (start / duration) * 100)
+      : 0
+  );
+
+
   return (
     <div className="timeline">
-      {observations.filter((item) => ["speech", "ocr", "scene"].includes(item.source)).map((item) => (
-        <button key={item.id} className={`marker marker-${item.source}`} style={{ left: `${duration ? Math.min(99, (item.start / duration) * 100) : 0}%` }} title={`${formatTime(item.start)}: ${item.text}`} onClick={() => onSeek(item.start)} aria-label={`Перейти: ${item.text}`} />
+      {sceneIntervals.map(([start, end], index) => (
+        <button
+          key={`scene-${index}`}
+          className="marker marker-scene"
+          style={{ left: `${position(start)}%` }}
+          title={`${formatTime(start)} — ${formatTime(end)}: сцена ${index + 1}`}
+          onClick={() => onSeek(start)}
+          aria-label={`Перейти к сцене ${index + 1}`}
+        />
       ))}
+
+
+      {observations
+        .filter((item) => ["speech", "ocr"].includes(item.source))
+        .map((item) => (
+          <button
+            key={item.id}
+            className={`marker marker-${item.source}`}
+            style={{ left: `${position(item.start)}%` }}
+            title={`${formatTime(item.start)}: ${item.text}`}
+            onClick={() => onSeek(item.start)}
+            aria-label={`Перейти: ${item.text}`}
+          />
+        ))}
     </div>
   );
 }

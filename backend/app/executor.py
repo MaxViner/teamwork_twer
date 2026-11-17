@@ -1,3 +1,10 @@
+"""Очередь выполнения заданий.
+
+Все этапы выполняются в одном фоновом потоке. Для каждого этапа
+executor запускает анализатор, сохраняет результат и наблюдения,
+ведёт историю прошлых попыток и выставляет итоговый статус задания.
+"""
+
 from concurrent.futures import ThreadPoolExecutor
 from threading import RLock
 from uuid import uuid4
@@ -7,6 +14,7 @@ from fastapi import HTTPException
 from app.errors import SkipStage
 from app.jobs import (
     DATA,
+    LAST_PROGRESS_UPDATE,
     LOCK,
     job_folder,
     load_job,
@@ -55,6 +63,7 @@ def _run_selected_stage(job_id: str, stage: str) -> None:
             "status": "skipped",
             "error": None,
             "note": "Отключено в настройках задания.",
+            
         })
         return
 
@@ -128,7 +137,13 @@ def _begin_stage(job_id: str, stage: str, run_id: str) -> None:
             run_id=run_id,
             error=None,
             note=None,
+            progress=0.0,
+            progress_message=None,
         )
+
+        job.setdefault("stage_progress", {})[stage] = 0.0
+        LAST_PROGRESS_UPDATE.pop((job_id, stage), None)
+
         job["progress"] = f"Этап: {stage}"
 
     mutate_job(job_id, begin)
@@ -149,6 +164,8 @@ def _complete_stage(
             observations=observations,
             note=result.get("note"),
             error=None,
+            progress=100.0,
+            progress_message=None,
         )
 
         job.setdefault("stage_progress", {})

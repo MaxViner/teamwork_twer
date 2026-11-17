@@ -1,7 +1,11 @@
 fastapi
 uvicorn[standard]
 pydantic
+numpy
+opencv-python
+pillow
+scenedetect
 faster-whisper
 easyocr
-scenedetect
-pillow
+transformers
+torch

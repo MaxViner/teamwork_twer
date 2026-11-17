@@ -1,3 +1,11 @@
+"""Сборка Markdown-отчёта.
+
+Отчёт читает сохранённые результаты этапов и складывает их в
+разделы: сведения о задании, локационное досье, метаданные и GPS,
+состояние анализаторов, речь, надписи, визуальные признаки и
+ограничения интерпретации. Ничего заново не анализируется.
+"""
+
 import json
 import math
 import re
@@ -16,7 +24,12 @@ STAGE_NAMES = {
     "metadata": "Метаданные",
     "scenes": "Разделение на сцены",
     "speech": "Распознавание речи",
+    "audio_structure": "Звуковая структура",
     "ocr": "Распознавание надписей",
+    "scene_objects": "Объекты и признаки места",
+    "visual_profile": "Визуальный профиль места",
+    "road_geometry": "Геометрия дороги",
+    "location_evidence": "Географические улики",
     "visual": "Визуальные признаки",
     "audio_events": "Звуковые события",
     "structure": "Структура и повторения",
@@ -24,14 +37,20 @@ STAGE_NAMES = {
 
 SOURCE_NAMES = {
     "technical": "Технические сведения",
+    "metadata": "Метаданные",
     "scene": "Сцена",
     "speech": "Речь",
     "ocr": "Надпись",
-    "visual": "Визуальное наблюдение",
-    "relation": "Пространственное отношение",
+    "audio_structure": "Звуковая структура",
     "audio_event": "Звуковое событие",
+    "visual": "Визуальное наблюдение",
+    "visual_profile": "Визуальный профиль",
+    "relation": "Пространственное отношение",
     "sequence": "Последовательность",
-    "reappearance": "Визуальное сходство объектов",
+    "reappearance": "Повторное появление",
+    "scene_objects": "Объекты сцены",
+    "road_geometry": "Геометрия дороги",
+    "location_evidence": "Географическая улика",
 }
 
 STATUS_NAMES = {
@@ -221,22 +240,17 @@ def collect_observations(job):
     Собирает текущие доступные наблюдения.
 
     История попыток повторно не добавляется, чтобы не
-    дублировать результаты. Географические метаданные исключены.
+    дублировать результаты. Метаданные и GPS включаются:
+    это самые сильные признаки места съёмки.
     """
     observations = []
 
     for stage_name, raw_stage in mapping(
         job.get("stages")
     ).items():
-        if stage_name == "metadata":
-            continue
-
         stage = mapping(raw_stage)
 
         for original in records(stage.get("observations")):
-            if original.get("source") == "metadata":
-                continue
-
             item = dict(original)
 
             item["_provenance"] = {
@@ -380,6 +394,216 @@ def append_section(lines, title, items):
         append_observation(lines, item, number)
 
 
+def stage_result(stages, name):
+    return mapping(
+        mapping(stages.get(name)).get("result")
+    )
+
+
+def location_dossier_section(stages):
+    """Локационное досье: координаты, страны, места, запросы."""
+    result = stage_result(stages, "location_evidence")
+    dossier = mapping(result.get("dossier"))
+
+    lines = [
+        "## 4. Локационное досье",
+        "",
+        "Досье объединяет независимые признаки места и "
+        "ранжирует страны и места-кандидаты. Это гипотезы "
+        "для проверки, а не подтверждённый адрес. Каждый "
+        "вывод можно проследить до исходного наблюдения.",
+        "",
+    ]
+
+    if not dossier:
+        lines.extend([
+            "Досье не сформировано: этап «Географические "
+            "улики» не завершён или не нашёл признаков.",
+            "",
+        ])
+        return lines
+
+    lines.extend([
+        "Краткий итог:",
+        block(dossier.get("summary", "")),
+        "",
+    ])
+
+    coordinates = records(dossier.get("coordinates"))
+
+    if coordinates:
+        lines.extend(["GPS-координаты:", ""])
+
+        for item in coordinates:
+            lines.append(
+                f"- {item.get('latitude')}, "
+                f"{item.get('longitude')} "
+                f"(источник: {item.get('origin') or 'не указан'})"
+            )
+
+        lines.append("")
+    else:
+        lines.extend([
+            "GPS-координаты не найдены. Для видео без геотегов "
+            "это ожидаемо, поэтому важны остальные признаки.",
+            "",
+        ])
+
+    countries = records(dossier.get("country_candidates"))
+
+    lines.extend(["Страны-кандидаты:", ""])
+
+    if countries:
+        for item in countries:
+            signals = item.get("signals") or []
+
+            lines.append(
+                f"- {item.get('name') or item.get('code')} — "
+                f"относительная оценка {item.get('score')}"
+            )
+
+            for signal in signals[:6]:
+                lines.append(f"  - {signal}")
+    else:
+        lines.append(
+            "- Недостаточно признаков для ранжирования стран."
+        )
+
+    lines.append("")
+
+    places = records(dossier.get("place_candidates"))
+
+    lines.extend(["Места и объекты-кандидаты:", ""])
+
+    if places:
+        for item in places:
+            lines.append(
+                f"- {item.get('text')} "
+                f"(упоминаний: {item.get('count', 0)}, "
+                f"оценка: {item.get('confidence')})"
+            )
+    else:
+        lines.append(
+            "- Точные места не выделены. Ищите по признакам "
+            "ниже: язык, бренды, дорожная геометрия, ландшафт."
+        )
+
+    lines.append("")
+
+    queries = dossier.get("search_queries")
+
+    if isinstance(queries, list) and queries:
+        lines.extend([
+            "Поисковые запросы для проверки на карте и в "
+            "поиске:",
+            "",
+        ])
+
+        for query in queries:
+            lines.append(f"- {query}")
+
+        lines.append("")
+
+    profile = mapping(dossier.get("profile"))
+
+    if profile:
+        lines.extend([
+            "Сводный профиль признаков:",
+            json_block(profile),
+            "",
+        ])
+
+    counts = mapping(dossier.get("evidence_counts"))
+
+    if counts:
+        lines.extend([
+            "Количество признаков по типам:",
+            json_block(counts),
+            "",
+        ])
+
+    limitations = dossier.get("limitations")
+
+    if limitations:
+        lines.extend([
+            "Ограничения досье:",
+            block(limitations),
+            "",
+        ])
+
+    return lines
+
+
+def metadata_section(stages):
+    """Метаданные контейнера и GPS — сильнейшие признаки места."""
+    result = stage_result(stages, "metadata")
+    tags = mapping(result.get("tags"))
+    gps = records(result.get("gps"))
+    stage = mapping(stages.get("metadata"))
+
+    lines = [
+        "## 5. Метаданные и GPS",
+        "",
+        "Теги контейнера не проверены на подлинность. "
+        "GPS-тег может быть унаследован от другого файла "
+        "или изменён, но остаётся самым точным признаком.",
+        "",
+    ]
+
+    if not result:
+        lines.extend([
+            "Этап метаданных не выполнялся в этом задании.",
+            "",
+        ])
+        return lines
+
+    if stage.get("status") not in (None, "completed"):
+        lines.extend([
+            "Этап метаданных не завершён успешно:",
+            block(stage.get("error") or stage.get("note") or ""),
+            "",
+        ])
+
+    lines.extend([
+        "Устройство:",
+        block(result.get("device") or "не определено"),
+        "",
+        "Дата создания:",
+        block(result.get("created_at") or "не определена"),
+        "",
+    ])
+
+    if gps:
+        lines.extend(["GPS из файла:", ""])
+
+        for item in gps:
+            lines.append(
+                f"- {item.get('latitude')}, {item.get('longitude')}"
+            )
+
+        lines.append("")
+    else:
+        lines.extend([
+            "GPS в метаданных не найден.",
+            "",
+        ])
+
+    if tags:
+        lines.extend([
+            "Найденные теги:",
+            json_block(tags),
+            "",
+        ])
+    else:
+        lines.extend([
+            "Полезные теги не найдены. Установка ExifTool "
+            "расширяет чтение метаданных, но не обязательна.",
+            "",
+        ])
+
+    return lines
+
+
 # ============================================================
 # Генерация отчёта
 # ============================================================
@@ -404,11 +628,12 @@ def render_report(job):
     prepared = mapping(prepare.get("result"))
 
     lines = [
-        "# Общий отчёт об извлечённой информации из видео",
+        "# Отчёт о признаках места съёмки и извлечённой информации",
         "",
-        "> Отчёт объединяет сохранённые результаты анализаторов. "
-        "Географические гипотезы, поиск места съёмки, "
-        "геокодирование и GPS в него не входят.",
+        "> Отчёт объединяет результаты анализаторов, включая "
+        "GPS, метаданные и визуальные признаки. Географические "
+        "гипотезы требуют ручной проверки и не являются "
+        "подтверждённым адресом.",
         "",
         "## 1. Сведения о задании",
         "",
@@ -429,11 +654,7 @@ def render_report(job):
         "",
         "## 2. Параметры анализа",
         "",
-        json_block({
-            key: value
-            for key, value in options.items()
-            if key != "metadata"
-        }),
+        json_block(dict(options)),
         "",
         "## 3. Сводка",
         "",
@@ -451,16 +672,19 @@ def render_report(job):
         "Количество наблюдений не равно количеству "
         "уникальных объектов или независимых свидетельств.",
         "",
-        "## 4. Состояние анализаторов",
-        "",
     ]
+
+    lines.extend(location_dossier_section(stages))
+    lines.extend(metadata_section(stages))
+
+    lines.extend([
+        "## 6. Состояние анализаторов",
+        "",
+    ])
 
     # ---------- Состояние этапов ----------
 
     for stage_name, raw_stage in stages.items():
-        if stage_name == "metadata":
-            continue
-
         stage = mapping(raw_stage)
         result = mapping(stage.get("result"))
 
@@ -497,14 +721,34 @@ def render_report(job):
 
         # Сохраняем полезные поля уровня этапа:
         # язык, список кадров, интервалы сцен и т. п.
+        # Тяжёлые блоки, повторяющие отдельные разделы,
+        # не дублируем.
+        excluded = {
+            "observations",
+            "errors",
+            "note",
+        }
+
+        if stage_name == "location_evidence":
+            excluded.update({"dossier", "artifact"})
+
+        if stage_name == "metadata":
+            excluded.update({"tags", "gps"})
+
+        if stage_name == "audio_structure":
+            excluded.add("windows")
+
+        if stage_name in (
+            "ocr",
+            "scene_objects",
+            "visual_profile",
+        ):
+            excluded.add("frames")
+
         stage_details = {
             key: value
             for key, value in result.items()
-            if key not in (
-                "observations",
-                "errors",
-                "note",
-            )
+            if key not in excluded
         }
 
         if stage_details:
@@ -516,6 +760,12 @@ def render_report(job):
 
     # Явно отмечаем новые этапы, которых нет в старом задании.
     for stage_name in (
+        "metadata",
+        "audio_structure",
+        "visual_profile",
+        "scene_objects",
+        "road_geometry",
+        "location_evidence",
         "visual",
         "audio_events",
         "structure",
@@ -534,7 +784,7 @@ def render_report(job):
 
     append_section(
         lines,
-        "5. Технические сведения",
+        "7. Технические сведения",
         select_items(observations, {"technical"}),
     )
 
@@ -542,14 +792,14 @@ def render_report(job):
 
     append_section(
         lines,
-        "6. Сцены",
+        "8. Сцены",
         select_items(observations, {"scene"}),
     )
 
     # ---------- Чистовая транскрипция ----------
 
     lines.extend([
-        "## 7. Транскрипция для чтения",
+        "## 9. Транскрипция для чтения",
         "",
         "Используется исправленный текст, если он сохранён. "
         "Отклонённые записи исключены только из этой версии "
@@ -590,14 +840,14 @@ def render_report(job):
 
     append_section(
         lines,
-        "8. Речь — оригиналы и проверка",
+        "10. Речь — оригиналы и проверка",
         speech,
     )
 
     # ---------- OCR: сводка повторов ----------
 
     lines.extend([
-        "## 9. Надписи — сводка повторений",
+        "## 11. Надписи — сводка повторений",
         "",
         "Группировка выполняется по совпадению текста "
         "после нормализации регистра и пробелов. "
@@ -666,7 +916,7 @@ def render_report(job):
 
     append_section(
         lines,
-        "10. Надписи — оригиналы и проверка",
+        "12. Надписи — оригиналы и проверка",
         ocr,
     )
 
@@ -689,7 +939,7 @@ def render_report(job):
     )
 
     lines.extend([
-        "## 11. Визуальные признаки — сводка категорий",
+        "## 13. Визуальные признаки — сводка категорий",
         "",
         "Учитываются записи об объектах, включая "
         "ещё не проверенные. Одна и та же вещь может "
@@ -704,34 +954,84 @@ def render_report(job):
 
     append_section(
         lines,
-        "12. Визуальные признаки — подробности",
+        "14. Визуальные признаки — подробности",
         visual,
+    )
+
+    # ---------- Визуальный профиль места ----------
+
+    visual_profile = stage_result(stages, "visual_profile")
+    profile = mapping(visual_profile.get("profile"))
+
+    lines.extend([
+        "## 15. Визуальный профиль места",
+        "",
+        "Освещённость, погода, сезон и тип ландшафта "
+        "оценены по цвету и текстуре кадров. Это "
+        "предварительные признаки, а не координаты.",
+        "",
+    ])
+
+    if profile:
+        lines.extend([
+            json_block(profile),
+            "",
+        ])
+    else:
+        lines.extend([
+            "Профиль не сформирован: этап «Визуальный "
+            "профиль места» не завершён.",
+            "",
+        ])
+
+    append_section(
+        lines,
+        "16. Объекты и признаки сцены",
+        select_items(observations, {"scene_objects"}),
+    )
+
+    append_section(
+        lines,
+        "17. Геометрия дороги",
+        select_items(observations, {"road_geometry"}),
+    )
+
+    append_section(
+        lines,
+        "18. Звуковая структура и звуковые события",
+        select_items(
+            observations,
+            {"audio_structure", "audio_event"},
+        ),
     )
 
     # ---------- Новые направления ----------
 
     append_section(
         lines,
-        "13. Пространственные отношения",
+        "19. Пространственные отношения",
         select_items(observations, {"relation"}),
     )
 
     append_section(
         lines,
-        "14. Звуковые события",
-        select_items(observations, {"audio_event"}),
+        "20. Повторяющиеся надписи и визуальные совпадения",
+        select_items(
+            observations,
+            {"reappearance", "sequence"},
+        ),
     )
 
     append_section(
         lines,
-        "15. Порядок появления объектов и кадров",
-        select_items(observations, {"sequence"}),
+        "21. Географические улики",
+        select_items(observations, {"location_evidence"}),
     )
 
     append_section(
         lines,
-        "16. Возможные повторные появления объектов",
-        select_items(observations, {"reappearance"}),
+        "22. Метаданные — наблюдения",
+        select_items(observations, {"metadata"}),
     )
 
     # Не теряем новые типы наблюдений при расширении сервиса.
@@ -751,13 +1051,18 @@ def render_report(job):
     # ---------- Ограничения ----------
 
     lines.extend([
-        "## 17. Ограничения и правила интерпретации",
+        "## 23. Ограничения и правила интерпретации",
         "",
-        "- Отчёт содержит результаты извлечения, "
+        "- Отчёт содержит признаки и гипотезы, "
         "а не подтверждённые географические выводы.",
-        "- GPS и этап географических метаданных исключены.",
+        "- GPS-тег файла может быть неточным, устаревшим "
+        "или унаследованным от другого устройства.",
         "- Упоминание места в речи или надписи "
         "не устанавливает место съёмки.",
+        "- Совпадение бренда, языка, валюты или телефона "
+        "сужает круг стран, но не даёт адрес.",
+        "- Визуальный профиль, звуковой фон и геометрия "
+        "дороги — предварительные оценки.",
         "- Оригинальные результаты сохранены отдельно "
         "от пользовательских исправлений.",
         "- Отклонённые наблюдения оставлены в подробных "

@@ -1,0 +1,102 @@
+.options {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin: 20px 0;
+}
+
+
+.option-toggle {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    align-items: start;
+    gap: 12px;
+    padding: 12px 14px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.03);
+    cursor: pointer;
+    transition:
+        border-color 0.15s ease,
+        background-color 0.15s ease;
+}
+
+
+.option-toggle:hover {
+    border-color: rgba(255, 255, 255, 0.25);
+    background: rgba(255, 255, 255, 0.06);
+}
+
+
+.option-toggle input {
+    position: absolute;
+    opacity: 0;
+    pointer-events: none;
+}
+
+
+.option-toggle-control {
+    position: relative;
+    width: 20px;
+    height: 20px;
+    margin-top: 2px;
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    border-radius: 6px;
+    background: transparent;
+    transition:
+        border-color 0.15s ease,
+        background-color 0.15s ease;
+}
+
+
+.option-toggle input:checked + .option-toggle-control {
+    border-color: #4ade80;
+    background: #4ade80;
+}
+
+
+.option-toggle-marker {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    transition: opacity 0.15s ease;
+}
+
+
+.option-toggle input:checked + .option-toggle-control .option-toggle-marker {
+    opacity: 1;
+}
+
+
+.option-toggle-marker::after {
+    content: "";
+    width: 10px;
+    height: 6px;
+    border-left: 2px solid #052e16;
+    border-bottom: 2px solid #052e16;
+    transform: rotate(-45deg) translate(1px, -1px);
+}
+
+
+.option-toggle-content {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+}
+
+
+.option-toggle-title {
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 1.35;
+}
+
+
+.option-toggle-description {
+    font-size: 12px;
+    line-height: 1.45;
+    color: rgba(255, 255, 255, 0.6);
+}

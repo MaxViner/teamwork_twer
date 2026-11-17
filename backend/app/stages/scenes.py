@@ -1,3 +1,10 @@
+"""Поиск сцен в видео.
+
+Библиотека PySceneDetect ищет моменты резкой смены картинки.
+Полученные интервалы сохраняются как наблюдения и используются
+другими этапами, чтобы брать кадры из середины каждой сцены.
+"""
+
 from pathlib import Path
 from typing import Callable
 
@@ -31,6 +38,7 @@ def extract_scenes(
 
     return {
         "intervals": intervals,
+        "scene_count": len(intervals),
         "observations": observations,
     }
 
@@ -62,19 +70,61 @@ def _build_observations(
     duration: float,
     intervals: list[list[float]],
 ) -> list[dict]:
+    """Складывает все сцены в одно наблюдение-сводку."""
+
+    if not intervals:
+        return []
+
+    normalized = [
+        [
+            max(0.0, float(start)),
+            min(duration, float(end)),
+        ]
+        for start, end in intervals
+    ]
+
+    total = sum(
+        end - start
+        for start, end in normalized
+    )
+
+    average = total / len(normalized)
+
     return [
         observation(
             source="scene",
-            start=max(0.0, start),
-            end=min(duration, end),
-            text=f"Сцена {index + 1}",
+            start=normalized[0][0],
+            end=normalized[-1][1],
+            text=(
+                f"Сцены: {len(normalized)}. "
+                "Средняя длительность: "
+                f"{_format_duration(average)}."
+            ),
             extractor="PySceneDetect",
             data={
+                "scene_count": len(normalized),
+                "total_seconds": round(total, 3),
+                "intervals": [
+                    [
+                        round(start, 3),
+                        round(end, 3),
+                    ]
+                    for start, end in normalized[:100]
+                ],
+                "intervals_truncated": (
+                    len(normalized) > 100
+                ),
                 "version": package_version(
                     "scenedetect"
                 ),
                 "time_is_approximate": True,
             },
         )
-        for index, (start, end) in enumerate(intervals)
     ]
+
+
+def _format_duration(seconds: float) -> str:
+    total = max(0, int(round(seconds)))
+    minutes, seconds = divmod(total, 60)
+
+    return f"{minutes}:{seconds:02d}"

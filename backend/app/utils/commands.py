@@ -1,3 +1,10 @@
+"""Запуск внешних программ.
+
+command() запускает процесс, ограничивает время выполнения и
+возвращает stdout, а при ошибке показывает stderr.
+require_tools() проверяет, что нужные программы есть в PATH.
+"""
+
 import shutil
 import subprocess
 from pathlib import Path

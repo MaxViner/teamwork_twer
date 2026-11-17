@@ -16,6 +16,12 @@ export default function Finding({ item, jobId, busy, onSeek, onSave, onError }) 
 
   const isImage = /\.(jpg|jpeg|png)$/i.test(item.artifact || "");
 
+  const intervals = Array.isArray(item.data?.intervals)
+    ? item.data.intervals
+    : [];
+
+  const intervalsTruncated = Boolean(item.data?.intervals_truncated);
+
   const save = async () => {
     setSaving(true);
     try { await onSave(item.id, { text, review }); } catch (error) { onError(error.message); } finally { setSaving(false); }
@@ -31,6 +37,21 @@ export default function Finding({ item, jobId, busy, onSeek, onSave, onError }) 
       {isImage && <a href={fileUrl(jobId, item.artifact)} target="_blank" rel="noreferrer"><img className="crop" src={fileUrl(jobId, item.artifact)} alt={`Фрагмент: ${item.text}`} loading="lazy" /></a>}
       <p className="original"><strong>Оригинал:</strong> {item.text}</p>
       {item.recognition_score != null && <p className="muted">Оценка OCR: {(item.recognition_score * 100).toFixed(1)}% · не вероятность геолокации</p>}
+
+      {intervals.length > 0 && (
+        <div className="interval-block">
+          <span className="muted">Участки:</span>
+          <div className="interval-list">
+            {intervals.slice(0, 24).map(([start, end], index) => (
+              <button key={`${start}-${end}-${index}`} className="interval-chip" onClick={() => onSeek(start)}>
+                {formatTime(start)}{end > start ? `–${formatTime(end)}` : ""}
+              </button>
+            ))}
+          </div>
+          {intervals.length > 24 && <span className="muted">Показаны первые 24 из {intervals.length}.</span>}
+          {intervalsTruncated && <span className="muted">Список участков сокращён.</span>}
+        </div>
+      )}
 
       <label>Исправленный текст<textarea value={text} onChange={(event) => setText(event.target.value)} disabled={busy || saving} rows={3} /></label>
 
