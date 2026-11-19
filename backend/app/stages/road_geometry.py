@@ -1,12 +1,14 @@
 """Геометрия дороги.
 
-Находит линии разметки и границы дорожного полотна через OpenCV,
-проверяет их согласованность между кадрами и оценивает сторону
-движения, число полос и перспективу. Служит подсказкой о стране
-и типе дороги; слабые и противоречивые находки отбрасываются.
+Находит линии разметки и границы дорожного полотна через OpenCV.
+Перед этим проверяет семантическую маску объектов: если модель не
+видит дорогу, тропинку или мост, линии от зданий, деревьев и
+приборной панели отбрасываются. Все кадры с подтверждённой дорогой
+складываются в одно наблюдение-сводку со списком таймкодов.
 """
 
 import math
+from collections import Counter
 from pathlib import Path
 
 import cv2
@@ -15,6 +17,11 @@ import numpy as np
 from app.errors import SkipStage
 from app.media.frames import stage_frames
 from app.observations import observation
+
+
+ROAD_SEMANTIC_LABELS = {"road", "path", "bridge"}
+SEMANTIC_ROAD_MIN_PERCENT = 1.0
+EVIDENCE_TOLERANCE_SECONDS = 0.2
 
 
 def extract_road_geometry(
@@ -51,9 +58,14 @@ def extract_road_geometry(
             "Нет кадров для анализа геометрии дороги."
         )
 
-    observations = []
     geometries = []
+    detections = []
     errors = []
+    rejected_without_road = 0
+    rejected_weak = 0
+
+    road_evidence = _scene_road_evidence(stages)
+    visual_metrics = _visual_metrics(stages)
 
     for index, frame in enumerate(frames):
         progress(
@@ -78,26 +90,54 @@ def extract_road_geometry(
             if geometry is None:
                 continue
 
+            evidence = _nearest_evidence(
+                road_evidence,
+                frame["timestamp"],
+            )
+
+            # Семантическая маска уже знает, есть ли на кадре
+            # дорога. Если модель её не видит, линии от зданий,
+            # деревьев или приборной панели дорогой не считаем.
+            if road_evidence is not None and (
+                evidence is None
+                or evidence < SEMANTIC_ROAD_MIN_PERCENT
+            ):
+                rejected_without_road += 1
+                continue
+
+            if evidence is None:
+                metrics = _nearest_evidence(
+                    visual_metrics,
+                    frame["timestamp"],
+                )
+
+                if not _heuristic_road_ok(
+                    geometry,
+                    metrics,
+                ):
+                    rejected_weak += 1
+                    continue
+
+                geometry["evidence_source"] = "heuristic"
+                geometry["semantic_road_percent"] = None
+
+            else:
+                geometry["evidence_source"] = "segformer"
+                geometry["semantic_road_percent"] = round(
+                    float(evidence),
+                    2,
+                )
+
             geometries.append(geometry)
 
-            observations.append(
-                observation(
-                    source="road_geometry",
-                    start=frame["timestamp"],
-                    end=frame["timestamp"],
-                    text=_geometry_text(geometry),
-                    artifact=frame["artifact"],
-                    frame_artifact=frame["artifact"],
-                    extractor="opencv-hough-road-geometry",
-                    data={
-                        "kind": "road_geometry",
-                        **geometry,
-                        "requires_review": True,
-                        "map_match_ready": False,
-                        "time_is_approximate": True,
-                    },
-                )
-            )
+            detections.append({
+                "timestamp": round(
+                    float(frame["timestamp"]),
+                    3,
+                ),
+                "artifact": frame["artifact"],
+                "geometry": geometry,
+            })
 
         except Exception as error:
             errors.append({
@@ -106,6 +146,10 @@ def extract_road_geometry(
             })
 
     summary = _summarize(geometries, len(frames))
+    observations = _build_observations(
+        detections,
+        summary,
+    )
 
     progress(100, "Анализ геометрии дороги завершён")
 
@@ -122,6 +166,12 @@ def extract_road_geometry(
             "Это тоже признак места: вероятны сцены без дороги."
         )
 
+        if rejected_without_road:
+            note += (
+                " Семантическая маска не подтвердила дорогу "
+                f"на {rejected_without_road} кадрах."
+            )
+
     elif not summary.get("road_detected"):
         note = (
             "Дорога или дорожная разметка найдена только "
@@ -134,7 +184,9 @@ def extract_road_geometry(
         "observations": observations,
         "errors": errors,
         "sampled_frames": len(frames),
-        "detected_frames": len(observations),
+        "detected_frames": len(detections),
+        "rejected_without_road": rejected_without_road,
+        "rejected_weak": rejected_weak,
         "note": note,
     }
 
@@ -555,3 +607,255 @@ def _geometry_text(geometry: dict) -> str:
         )
 
     return "; ".join(parts) + "."
+
+
+def _scene_road_evidence(
+    stages: dict,
+) -> list[tuple[float, float]] | None:
+    """
+    Возвращает долю дороги по данным семантической модели.
+
+    Кадры без дороги, тропинки или моста получают 0%.
+    Если семантического результата нет, возвращается None,
+    и решение принимается по визуальному профилю.
+    """
+
+    result = stages.get("scene_objects", {}).get(
+        "result"
+    ) or {}
+
+    method = result.get("method")
+
+    if method and method != "segformer":
+        return None
+
+    frames = result.get("frames")
+
+    if not isinstance(frames, list) or not frames:
+        return None
+
+    evidence = []
+
+    for frame in frames:
+        if not isinstance(frame, dict):
+            continue
+
+        timestamp = frame.get("timestamp")
+
+        if timestamp is None:
+            continue
+
+        percent = 0.0
+
+        for item in frame.get("objects", []):
+            if not isinstance(item, dict):
+                continue
+
+            if item.get("label") in ROAD_SEMANTIC_LABELS:
+                percent += float(
+                    item.get("area_percent") or 0
+                )
+
+        evidence.append((
+            float(timestamp),
+            percent,
+        ))
+
+    evidence.sort(key=lambda item: item[0])
+
+    return evidence or None
+
+
+def _visual_metrics(
+    stages: dict,
+) -> list[tuple[float, dict]] | None:
+    """Возвращает метрики визуального профиля по таймкодам."""
+
+    result = stages.get("visual_profile", {}).get(
+        "result"
+    ) or {}
+
+    frames = result.get("frames")
+
+    if not isinstance(frames, list) or not frames:
+        return None
+
+    metrics = []
+
+    for frame in frames:
+        if not isinstance(frame, dict):
+            continue
+
+        timestamp = frame.get("timestamp")
+
+        if timestamp is None:
+            continue
+
+        values = frame.get("metrics")
+
+        if isinstance(values, dict):
+            metrics.append((
+                float(timestamp),
+                values,
+            ))
+
+    metrics.sort(key=lambda item: item[0])
+
+    return metrics or None
+
+
+def _nearest_evidence(
+    evidence: list[tuple[float, float]] | None,
+    timestamp: float,
+):
+    """Ближайшее значение в пределах допуска или None."""
+
+    if not evidence:
+        return None
+
+    nearest = min(
+        evidence,
+        key=lambda item: abs(item[0] - timestamp),
+    )
+
+    if (
+        abs(nearest[0] - timestamp)
+        > EVIDENCE_TOLERANCE_SECONDS
+    ):
+        return None
+
+    return nearest[1]
+
+
+def _heuristic_road_ok(
+    geometry: dict,
+    metrics: dict | None,
+) -> bool:
+    """
+    Запасная проверка без семантической модели.
+
+    Линии сами по себе слишком часто приходят от зданий,
+    деревьев и приборной панели. Поэтому нужны и разметка,
+    и признаки асфальта в нижней части кадра.
+    """
+
+    if not metrics:
+        return False
+
+    markings = geometry.get("markings") or {}
+
+    marking_share = (
+        float(markings.get("white") or 0)
+        + float(markings.get("yellow") or 0)
+    )
+
+    if marking_share < 1.0:
+        return False
+
+    if geometry.get("vanishing_ratio") is None:
+        return False
+
+    if float(geometry.get("confidence") or 0) < 0.6:
+        return False
+
+    asphalt = float(metrics.get("asphalt") or 0)
+    gray_lower = float(metrics.get("gray_lower") or 0)
+    smooth_lower = float(metrics.get("smooth_lower") or 0)
+    vegetation = float(metrics.get("vegetation") or 0)
+
+    if vegetation > 35:
+        return False
+
+    return (
+        asphalt >= 8.0
+        and gray_lower >= 20.0
+        and smooth_lower >= 20.0
+    )
+
+
+def _build_observations(
+    detections: list[dict],
+    summary: dict,
+) -> list[dict]:
+    """
+    Складывает все кадры с дорогой в одно наблюдение-сводку.
+
+    Список сегментов хранит таймкод каждого кадра, поэтому
+    карточка занимает одну строку интерфейса, а переходы
+    к отдельным кадрам остаются доступны.
+    """
+
+    if not detections:
+        return []
+
+    segments = []
+
+    for detection in detections:
+        geometry = detection["geometry"]
+
+        segments.append({
+            "start": detection["timestamp"],
+            "end": detection["timestamp"],
+            "text": _geometry_text(geometry),
+            "artifact": detection["artifact"],
+            "direction": geometry["direction"],
+            "width_label": geometry["width_label"],
+            "markings": geometry["markings"],
+            "confidence": geometry["confidence"],
+            "evidence_source": geometry.get(
+                "evidence_source"
+            ),
+            "semantic_road_percent": geometry.get(
+                "semantic_road_percent"
+            ),
+        })
+
+    widths = Counter(
+        segment["width_label"]
+        for segment in segments
+    )
+
+    width_label = widths.most_common(1)[0][0]
+
+    evidence_sources = Counter(
+        segment["evidence_source"]
+        for segment in segments
+        if segment["evidence_source"]
+    )
+
+    text = (
+        f"Дорога: {summary['direction']}; "
+        f"{width_label}; кадров с признаками дороги: "
+        f"{len(segments)} из {summary['sampled_frames']}."
+    )
+
+    if evidence_sources:
+        source_names = {
+            "segformer": "семантическая маска",
+            "heuristic": "визуальная проверка",
+        }
+
+        text += " Основание: " + ", ".join(
+            f"{source_names.get(name, name)} "
+            f"({count} кадр.)"
+            for name, count in evidence_sources.items()
+        ) + "."
+
+    return [
+        observation(
+            source="road_geometry",
+            start=segments[0]["start"],
+            end=segments[-1]["end"],
+            text=text,
+            extractor="opencv-hough-road-geometry",
+            data={
+                "kind": "road_geometry_summary",
+                "segment_count": len(segments),
+                "segments": segments,
+                "summary": summary,
+                "requires_review": True,
+                "map_match_ready": False,
+                "time_is_approximate": True,
+            },
+        )
+    ]

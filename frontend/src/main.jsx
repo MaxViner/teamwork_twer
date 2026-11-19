@@ -6,6 +6,8 @@ import "./styles/layout.css";
 import "./styles/stages.css";
 import "./styles/findings.css";
 import "./styles/dossier.css";
+import "./styles/landmarks.css";
+import "./styles/keyframes.css";
 import "./styles/responsive.css";
 
 createRoot(document.getElementById("root")).render(<App />);

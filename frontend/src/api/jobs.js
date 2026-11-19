@@ -1,6 +1,18 @@
 import { request } from "./client.js";
 
 
+function responseError(status, body) {
+    return new Error(
+        typeof body?.detail === "string"
+            ? body.detail
+            : JSON.stringify(
+                body?.detail
+                || `HTTP ${status}`,
+            ),
+    );
+}
+
+
 
 export const fetchJobs = () =>
     request("/jobs");
@@ -15,6 +27,7 @@ export const fetchJob = (id) =>
 export function createJob({
     file,
     options,
+    onProgress,
 }) {
     const body = new FormData();
 
@@ -25,13 +38,74 @@ export function createJob({
         JSON.stringify(options),
     );
 
-    return request(
-        "/jobs",
-        {
-            method: "POST",
-            body,
-        },
-    );
+    return new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+
+        xhr.open("POST", "/api/jobs");
+
+        xhr.upload.onprogress = (event) => {
+            if (
+                !event.lengthComputable
+                || !onProgress
+            ) {
+                return;
+            }
+
+            onProgress(
+                Math.min(
+                    100,
+                    Math.round(
+                        event.loaded
+                        / event.total
+                        * 100,
+                    ),
+                ),
+            );
+        };
+
+        xhr.upload.onload = () => {
+            onProgress?.(100);
+        };
+
+        xhr.onload = () => {
+            let payload = null;
+
+            try {
+                payload = xhr.responseText
+                    ? JSON.parse(xhr.responseText)
+                    : null;
+            } catch {
+                payload = null;
+            }
+
+            if (
+                xhr.status >= 200
+                && xhr.status < 300
+            ) {
+                resolve(payload);
+            } else {
+                reject(
+                    responseError(
+                        xhr.status,
+                        payload,
+                    ),
+                );
+            }
+        };
+
+        xhr.onerror = () => reject(
+            new Error(
+                "Не удалось загрузить видео. "
+                + "Проверьте соединение.",
+            ),
+        );
+
+        xhr.onabort = () => reject(
+            new Error("Загрузка отменена."),
+        );
+
+        xhr.send(body);
+    });
 }
 
 

@@ -3,6 +3,7 @@ import { formatTime } from "../utils/formatTime.js";
 
 export default function Timeline({
   observations,
+  speechSegments = [],
   sceneIntervals = [],
   duration,
   onSeek,
@@ -12,6 +13,10 @@ export default function Timeline({
       ? Math.min(99, (start / duration) * 100)
       : 0
   );
+
+  const speechMarkers = speechSegments.length > 0
+    ? speechSegments
+    : observations.filter((item) => item.source === "speech");
 
 
   return (
@@ -28,8 +33,20 @@ export default function Timeline({
       ))}
 
 
+      {speechMarkers.map((item, index) => (
+        <button
+          key={`speech-${index}`}
+          className="marker marker-speech"
+          style={{ left: `${position(item.start)}%` }}
+          title={`${formatTime(item.start)}: ${item.text}`}
+          onClick={() => onSeek(item.start)}
+          aria-label={`Перейти к реплике ${index + 1}`}
+        />
+      ))}
+
+
       {observations
-        .filter((item) => ["speech", "ocr"].includes(item.source))
+        .filter((item) => item.source === "ocr")
         .map((item) => (
           <button
             key={item.id}

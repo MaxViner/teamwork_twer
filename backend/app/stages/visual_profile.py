@@ -2,7 +2,8 @@
 
 Без нейросетей измеряет яркость, контраст, насыщенность, долю неба,
 зелени, воды, снега, асфальта и песка, плотность краёв и текстуры.
-По этим числам оцениваются климат, время суток и тип местности.
+Профиль всех кадров сохраняется как одно наблюдение-сводка, а
+отдельные кадры доступны списком таймкодов.
 """
 
 import statistics
@@ -62,7 +63,7 @@ def extract_visual_profile(
     if not frames:
         raise RuntimeError("Не удалось получить кадры для анализа.")
 
-    observations = []
+    segments = []
     analyzed = []
 
     for index, frame in enumerate(frames):
@@ -81,27 +82,19 @@ def extract_visual_profile(
             "descriptors": descriptors,
         })
 
-        observations.append(
-            observation(
-                source="visual_profile",
-                start=frame["timestamp"],
-                end=frame["timestamp"],
-                text=_observation_text(descriptors),
-                artifact=frame["artifact"],
-                frame_artifact=frame["artifact"],
-                extractor="pillow-numpy-visual-profile",
-                data={
-                    "kind": "visual_profile",
-                    "metrics": metrics,
-                    "descriptors": descriptors,
-                    "machine_generated": True,
-                    "requires_review": True,
-                    "time_is_approximate": True,
-                },
-            )
-        )
+        segments.append({
+            "start": round(float(frame["timestamp"]), 3),
+            "end": round(float(frame["timestamp"]), 3),
+            "text": _observation_text(descriptors),
+            "artifact": frame["artifact"],
+        })
 
     profile = aggregate_profile(analyzed)
+
+    observations = _build_observations(
+        segments,
+        profile,
+    )
 
     progress(100, "Визуальный профиль сформирован")
 
@@ -109,12 +102,47 @@ def extract_visual_profile(
         "frames": analyzed,
         "profile": profile,
         "observations": observations,
+        "segment_count": len(segments),
         "note": (
             "Освещённость, погода, сезон и тип ландшафта "
             "оценены по цвету и текстуре кадров. Это "
             "предварительные признаки, а не точное место."
         ),
     }
+
+
+def _build_observations(
+    segments: list[dict],
+    profile: dict,
+) -> list[dict]:
+    """Складывает профиль всех кадров в одно наблюдение-сводку."""
+
+    if not segments:
+        return []
+
+    text = (
+        _observation_text(profile)
+        if profile
+        else "Визуальный профиль кадров сформирован."
+    )
+
+    return [
+        observation(
+            source="visual_profile",
+            start=segments[0]["start"],
+            end=segments[-1]["end"],
+            text=text,
+            extractor="pillow-numpy-visual-profile",
+            data={
+                "kind": "visual_profile_summary",
+                "segment_count": len(segments),
+                "segments": segments,
+                "machine_generated": True,
+                "requires_review": True,
+                "time_is_approximate": True,
+            },
+        )
+    ]
 
 
 def analyze_frame(path: Path) -> dict:

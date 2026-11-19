@@ -88,6 +88,61 @@ form {
 }
 
 
+.form-actions {
+    display: grid;
+    gap: 10px;
+    justify-items: start;
+}
+
+
+.upload-progress {
+    display: grid;
+    gap: 7px;
+    width: min(460px, 100%);
+}
+
+
+.upload-progress-bar {
+    width: 100%;
+    height: 10px;
+    border-radius: 999px;
+    overflow: hidden;
+    background: rgba(255, 255, 255, 0.08);
+}
+
+
+.upload-progress-fill {
+    display: block;
+    height: 100%;
+    width: 0;
+    border-radius: 999px;
+    background: linear-gradient(
+        90deg,
+        #ff7a24,
+        #ffb06a
+    );
+
+    transition: width 220ms ease;
+}
+
+
+.upload-progress-bar.is-indeterminate .upload-progress-fill {
+    width: 35%;
+    animation: upload-progress-slide 1.25s ease-in-out infinite;
+}
+
+
+@keyframes upload-progress-slide {
+    from {
+        transform: translateX(-120%);
+    }
+
+    to {
+        transform: translateX(320%);
+    }
+}
+
+
 .button-primary,
 .primary {
     background: linear-gradient(

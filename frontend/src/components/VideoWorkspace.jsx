@@ -8,6 +8,7 @@ export default function VideoWorkspace({ job, observations, currentTime, videoRe
   const duration = prepared?.duration || 0;
   const frames = job?.stages?.ocr?.result?.frames || [];
   const sceneIntervals = job?.stages?.scenes?.result?.intervals || [];
+  const speechSegments = job?.stages?.speech?.result?.segments || [];
 
   return (
     <section className="panel player-panel">
@@ -15,7 +16,7 @@ export default function VideoWorkspace({ job, observations, currentTime, videoRe
       {preview ? (
         <>
           <VideoPlayer jobId={job.id} preview={preview} duration={duration} currentTime={currentTime} videoRef={videoRef} onSeek={onSeek} onTimeUpdate={onTimeUpdate} />
-          <Timeline observations={observations} sceneIntervals={sceneIntervals} duration={duration} onSeek={onSeek} />
+          <Timeline observations={observations} speechSegments={speechSegments} sceneIntervals={sceneIntervals} duration={duration} onSeek={onSeek} />
           <p className="muted">Метки: речь — коричневые, OCR — зелёные, сцены — серые. Таймкоды приблизительные.</p>
         </>
       ) : <p className="muted">Видео появится после подготовки.</p>}

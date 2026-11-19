@@ -1,3 +1,11 @@
+export const COMBINED_SOURCES = [
+    "scene_objects",
+    "visual_profile",
+    "road_geometry",
+];
+
+
+
 export const STAGE_ORDER = [
     "prepare",
     "metadata",
@@ -38,7 +46,7 @@ export const STAGE_COUNT_LABELS = {
     audio_structure: "Звуковых событий",
     ocr: "Текстовых фрагментов",
     structure: "Повторов",
-    scene_objects: "Типов объектов",
+    scene_objects: "Уникальных объектов",
     visual_profile: "Проанализированных кадров",
     road_geometry: "Участков с геометрией дороги",
     location_evidence: "Географических улик",

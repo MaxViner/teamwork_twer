@@ -6,6 +6,9 @@ import StageGrid from "./components/StageGrid.jsx";
 import VideoWorkspace from "./components/VideoWorkspace.jsx";
 import FindingsPanel from "./components/FindingsPanel.jsx";
 import LocationDossier from "./components/LocationDossier.jsx";
+import LandmarksPanel from "./components/LandmarksPanel.jsx";
+import KeyFramesPanel from "./components/KeyFramesPanel.jsx";
+import { COMBINED_SOURCES } from "./constants/labels.js";
 import { useJobs } from "./hooks/useJobs.js";
 import { useJobPolling } from "./hooks/useJobPolling.js";
 import { useVideoPlayer } from "./hooks/useVideoPlayer.js";
@@ -47,6 +50,10 @@ export default function App() {
         selectedId,
         setSelectedId,
         uploading,
+        uploadProgress,
+        preparing,
+        prepareProgress,
+        prepareMessage,
         upload,
         remove,
         loadJobs,
@@ -91,6 +98,11 @@ export default function App() {
 
     const visible = useMemo(
         () => observations.filter((item) => {
+            if (COMBINED_SOURCES.includes(item.source)) {
+                return false;
+            }
+
+
             const text = (
                 item.corrected_text ?? item.text
             ).toLowerCase();
@@ -242,6 +254,10 @@ export default function App() {
             <UploadPanel
                 key={uploadPanelKey}
                 uploading={uploading}
+                uploadProgress={uploadProgress}
+                preparing={preparing}
+                prepareProgress={prepareProgress}
+                prepareMessage={prepareMessage}
                 onUpload={handleUpload}
             />
 
@@ -314,6 +330,18 @@ export default function App() {
 
 
                     <LocationDossier job={job} />
+
+
+                    <LandmarksPanel
+                        job={job}
+                        onSeek={seek}
+                    />
+
+
+                    <KeyFramesPanel
+                        job={job}
+                        onSeek={seek}
+                    />
 
 
                     <div className="workspace">

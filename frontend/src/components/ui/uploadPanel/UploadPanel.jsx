@@ -11,6 +11,10 @@ import {
 
 export default function UploadPanel({
     uploading,
+    uploadProgress,
+    preparing,
+    prepareProgress,
+    prepareMessage,
     onUpload,
 }) {
     const fileInputRef = useRef(null);
@@ -63,6 +67,17 @@ export default function UploadPanel({
 
 
 
+                <UploadActions
+                    uploading={uploading}
+                    uploadProgress={uploadProgress}
+                    preparing={preparing}
+                    prepareProgress={prepareProgress}
+                    prepareMessage={prepareMessage}
+                    hasFile={Boolean(file)}
+                />
+
+
+
                 <UploadOptions
                     options={options}
                     onChange={setOption}
@@ -83,13 +98,6 @@ export default function UploadPanel({
                     Первый запуск может скачать модели
                     для речи, текста и сцены.
                 </p>
-
-
-
-                <UploadActions
-                    uploading={uploading}
-                    hasFile={Boolean(file)}
-                />
             </form>
         </section>
     );

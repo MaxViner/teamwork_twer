@@ -2,8 +2,9 @@
 
 Отчёт читает сохранённые результаты этапов и складывает их в
 разделы: сведения о задании, локационное досье, метаданные и GPS,
-состояние анализаторов, речь, надписи, визуальные признаки и
-ограничения интерпретации. Ничего заново не анализируется.
+состояние анализаторов, речь, надписи, уникальные объекты, сводку
+по ключевым кадрам и ограничения интерпретации. Ничего заново
+не анализируется.
 """
 
 import json
@@ -13,6 +14,12 @@ import unicodedata
 
 from collections import Counter
 from datetime import datetime, timezone
+
+from app.stages.scene_objects import (
+    CATEGORY_LABELS_RU,
+    CATEGORY_ORDER,
+    unique_objects_from_frames,
+)
 
 
 # ============================================================
@@ -82,6 +89,12 @@ CATEGORY_NAMES = {
 }
 
 KNOWN_SOURCES = set(SOURCE_NAMES)
+
+KEY_FRAME_SPEECH_WINDOW_SECONDS = 10
+KEY_FRAME_SPEECH_LIMIT = 5
+KEY_FRAME_LIMIT = 60
+KEY_FRAME_MATCH_TOLERANCE_SECONDS = 0.75
+ROAD_MATCH_TOLERANCE_SECONDS = 0.2
 
 
 # ============================================================
@@ -334,10 +347,47 @@ def append_observation(lines, item, number):
         "",
     ])
 
-    if item.get("data"):
+    data = mapping(item.get("data"))
+    segments = records(data.get("segments"))
+
+    if segments and source != "speech":
+        lines.extend([
+            "Фрагменты:",
+            "",
+        ])
+
+        for segment in segments[:120]:
+            text = str(
+                segment.get("text", "")
+            ).strip()
+
+            if not text:
+                continue
+
+            lines.append(
+                f"- `{timestamp(segment.get('start'))}`"
+                f" — {text}"
+            )
+
+        if len(segments) > 120:
+            lines.append(
+                f"Показаны первые 120 из "
+                f"{len(segments)} фрагментов."
+            )
+
+        lines.append("")
+
+    if segments:
+        data = {
+            key: value
+            for key, value in data.items()
+            if key != "segments"
+        }
+
+    if data:
         lines.extend([
             "Дополнительные данные анализатора:",
-            json_block(item["data"]),
+            json_block(data),
             "",
         ])
 
@@ -398,6 +448,576 @@ def stage_result(stages, name):
     return mapping(
         mapping(stages.get(name)).get("result")
     )
+
+
+def stage_frames(stages, name):
+    """Возвращает только словари кадров из результата этапа."""
+    return records(
+        stage_result(stages, name).get("frames")
+    )
+
+
+def key_frame_items(stages):
+    """
+    Собирает ключевые кадры из всех визуальных этапов.
+
+    Один и тот же таймкод может встречаться в объектах, визуальном
+    профиле и OCR. Все сведения объединяются в одну запись, чтобы
+    отчёт не повторял кадр несколько раз.
+    """
+    collected = {}
+
+    for stage_name in (
+        "visual_profile",
+        "scene_objects",
+        "ocr",
+    ):
+        for frame in stage_frames(stages, stage_name):
+            moment = numeric_time(frame.get("timestamp"))
+
+            if moment is None:
+                continue
+
+            key = round(moment, 3)
+            item = collected.setdefault(key, {
+                "timestamp": moment,
+                "artifact": None,
+                "objects": [],
+                "descriptors": {},
+                "metrics": {},
+            })
+
+            if not item["artifact"]:
+                item["artifact"] = frame.get("artifact")
+
+            objects = records(frame.get("objects"))
+
+            if objects:
+                item["objects"] = objects
+
+            descriptors = mapping(frame.get("descriptors"))
+
+            if descriptors:
+                item["descriptors"] = descriptors
+
+            metrics = mapping(frame.get("metrics"))
+
+            if metrics:
+                item["metrics"] = metrics
+
+    return [
+        collected[key]
+        for key in sorted(collected)
+    ]
+
+
+def semantic_road_frames(stages):
+    """
+    Возвращает долю дороги по семантической маске для каждого кадра.
+
+    Для старых заданий это позволяет отбросить ложные срабатывания
+    геометрии дороги без повторного запуска этапа. Если маска
+    недоступна, возвращается None и решение не переопределяется.
+    """
+    result = stage_result(stages, "scene_objects")
+    method = result.get("method")
+
+    if method and method != "segformer":
+        return None
+
+    frames = records(result.get("frames"))
+
+    if not frames:
+        return None
+
+    evidence = {}
+
+    for frame in frames:
+        moment = numeric_time(frame.get("timestamp"))
+
+        if moment is None:
+            continue
+
+        percent = 0.0
+
+        for item in records(frame.get("objects")):
+            if item.get("label") in {
+                "road",
+                "path",
+                "bridge",
+            }:
+                percent += float(
+                    item.get("area_percent") or 0
+                )
+
+        evidence[round(moment, 3)] = percent
+
+    return evidence or None
+
+
+def road_allowed_by_mask(evidence, moment):
+    """Проверяет кадр по семантической маске дороги."""
+    if not evidence or moment is None:
+        return True
+
+    nearest_key = None
+    nearest_diff = None
+
+    for key in evidence:
+        diff = abs(key - moment)
+
+        if nearest_diff is None or diff < nearest_diff:
+            nearest_key = key
+            nearest_diff = diff
+
+    if nearest_key is None or nearest_diff is None:
+        return False
+
+    if nearest_diff > ROAD_MATCH_TOLERANCE_SECONDS:
+        return False
+
+    return evidence[nearest_key] >= 1.0
+
+
+def road_evidence(stages, observations):
+    """Собирает кадры с дорогой, отбрасывая ложные срабатывания."""
+    segments = []
+
+    for item in observations:
+        if item.get("source") != "road_geometry":
+            continue
+
+        data = mapping(item.get("data"))
+        stored = records(data.get("segments"))
+
+        if stored:
+            for segment in stored:
+                segments.append({
+                    **segment,
+                    "confidence": (
+                        segment.get("confidence")
+                        if segment.get("confidence") is not None
+                        else data.get("confidence")
+                    ),
+                })
+
+            continue
+
+        segments.append({
+            "start": item.get("start"),
+            "end": item.get("end"),
+            "text": effective_text(item),
+            "confidence": data.get("confidence"),
+            "semantic_road_percent": data.get(
+                "semantic_road_percent"
+            ),
+        })
+
+    evidence = semantic_road_frames(stages)
+
+    return [
+        segment
+        for segment in segments
+        if road_allowed_by_mask(
+            evidence,
+            numeric_time(segment.get("start")),
+        )
+    ]
+
+
+def speech_evidence(observations):
+    """Собирает реплики речи из новых и старых наблюдений."""
+    segments = []
+
+    for item in observations:
+        if item.get("source") != "speech":
+            continue
+
+        stored = records(
+            mapping(item.get("data")).get("segments")
+        )
+
+        if stored:
+            for segment in stored:
+                start = numeric_time(segment.get("start"))
+
+                if start is None:
+                    continue
+
+                end = numeric_time(segment.get("end"))
+
+                segments.append({
+                    "start": start,
+                    "end": end if end is not None else start,
+                    "text": str(segment.get("text", "")).strip(),
+                })
+
+            continue
+
+        start = numeric_time(item.get("start"))
+
+        if start is None:
+            continue
+
+        end = numeric_time(item.get("end"))
+
+        segments.append({
+            "start": start,
+            "end": end if end is not None else start,
+            "text": effective_text(item).strip(),
+        })
+
+    return sorted(segments, key=lambda item: item["start"])
+
+
+def speech_distance(segment, moment):
+    """Расстояние от таймкода до реплики; внутри реплики — ноль."""
+    if moment < segment["start"]:
+        return segment["start"] - moment
+
+    if moment > segment["end"]:
+        return moment - segment["end"]
+
+    return 0.0
+
+
+def closest_speech(segments, moment):
+    """Ближайшие реплики, затем снова по времени."""
+    chosen = sorted(
+        segments,
+        key=lambda item: speech_distance(item, moment),
+    )[:KEY_FRAME_SPEECH_LIMIT]
+
+    return sorted(
+        chosen,
+        key=lambda item: item["start"],
+    )
+
+
+def ocr_evidence(observations):
+    """Собирает надписи с привязкой к кадру."""
+    items = []
+
+    for item in observations:
+        if item.get("source") != "ocr":
+            continue
+
+        text = effective_text(item).strip()
+
+        if not text:
+            continue
+
+        items.append({
+            "start": numeric_time(item.get("start")),
+            "frame_artifact": item.get("frame_artifact"),
+            "text": text,
+        })
+
+    return items
+
+
+def nearest_evidence(segments, moment):
+    """Ближайший фрагмент в пределах допуска или None."""
+    nearest = None
+    nearest_diff = None
+
+    for segment in segments:
+        start = numeric_time(segment.get("start"))
+
+        if start is None:
+            continue
+
+        diff = abs(start - moment)
+
+        if nearest_diff is None or diff < nearest_diff:
+            nearest = segment
+            nearest_diff = diff
+
+    if nearest_diff is None:
+        return None
+
+    if nearest_diff > KEY_FRAME_MATCH_TOLERANCE_SECONDS:
+        return None
+
+    return nearest
+
+
+def scene_bounds(stages, moment):
+    """Возвращает номер сцены и её границы для таймкода."""
+    intervals = stage_result(stages, "scenes").get(
+        "intervals"
+    )
+
+    if not isinstance(intervals, list) or not intervals:
+        return None
+
+    index = None
+
+    for position, interval_value in enumerate(intervals):
+        if not isinstance(
+            interval_value,
+            (list, tuple),
+        ) or len(interval_value) < 2:
+            continue
+
+        start = numeric_time(interval_value[0])
+        end = numeric_time(interval_value[1])
+
+        if start is None or end is None:
+            continue
+
+        if start <= moment < end:
+            index = position
+            break
+
+    if index is None:
+        index = len(intervals) - 1
+
+    interval_value = intervals[index]
+
+    return (
+        index + 1,
+        numeric_time(interval_value[0]),
+        numeric_time(interval_value[1]),
+    )
+
+
+def metric_text(metrics):
+    """Короткая строка числовых метрик визуального профиля."""
+    parts = []
+
+    if numeric_time(metrics.get("brightness")) is not None:
+        parts.append(
+            f"яркость {round(float(metrics['brightness']))}"
+        )
+
+    if numeric_time(metrics.get("contrast")) is not None:
+        parts.append(
+            f"контраст {round(float(metrics['contrast']))}"
+        )
+
+    if numeric_time(metrics.get("saturation")) is not None:
+        parts.append(
+            f"насыщенность "
+            f"{round(float(metrics['saturation']))}"
+        )
+
+    return ", ".join(parts)
+
+
+def key_frames_section(stages, observations):
+    """
+    Сводный раздел по ключевым кадрам.
+
+    Для каждого кадра объединяются объекты, визуальный профиль,
+    дорога, распознанный текст и речь в пределах ±10 секунд.
+    """
+    frames = key_frame_items(stages)
+
+    lines = [
+        "## 17. Ключевые кадры",
+        "",
+        "Один сводный вывод на исследованный кадр: объекты, "
+        "визуальный профиль, геометрия дороги, текст на кадре "
+        "и речь в пределах "
+        f"±{KEY_FRAME_SPEECH_WINDOW_SECONDS} секунд. "
+        "Таймкоды приблизительные.",
+        "",
+    ]
+
+    if not frames:
+        lines.extend([
+            "Ключевые кадры не найдены: визуальные этапы "
+            "не завершены или не сохранили кадры.",
+            "",
+        ])
+        return lines
+
+    roads = road_evidence(stages, observations)
+    speech = speech_evidence(observations)
+    ocr = ocr_evidence(observations)
+
+    for number, frame in enumerate(
+        frames[:KEY_FRAME_LIMIT],
+        start=1,
+    ):
+        moment = frame["timestamp"]
+        scene = scene_bounds(stages, moment)
+
+        title = f"### Кадр {number} · {timestamp(moment)}"
+
+        if scene:
+            title += (
+                f" · сцена {scene[0]} "
+                f"({timestamp(scene[1])} — "
+                f"{timestamp(scene[2])})"
+            )
+
+        lines.extend([title, ""])
+
+        objects = sorted(
+            frame["objects"],
+            key=lambda item: -float(
+                item.get("area_percent") or 0
+            ),
+        )
+
+        if objects:
+            lines.append(
+                "- Объекты: "
+                + ", ".join(
+                    f"{item.get('label_ru') or item.get('label')}"
+                    f" ({item.get('area_percent', 0)}%)"
+                    for item in objects[:6]
+                )
+                + "."
+            )
+        else:
+            lines.append("- Объекты: не найдены.")
+
+        descriptors = frame["descriptors"]
+        metrics = frame["metrics"]
+
+        place_parts = [
+            descriptors.get("lighting"),
+            descriptors.get("weather"),
+            descriptors.get("season"),
+        ]
+
+        place = "; ".join(
+            str(part)
+            for part in place_parts
+            if part
+        )
+
+        landscape = descriptors.get("landscape")
+
+        place_line = f"- Место: {place}." if place else "- Место: не определено."
+
+        if isinstance(landscape, list) and landscape:
+            place_line += (
+                " Ландшафт: "
+                + ", ".join(str(item) for item in landscape)
+                + "."
+            )
+
+        lines.append(place_line)
+
+        numbers = metric_text(metrics)
+
+        if numbers:
+            lines.append(f"- Метрики кадра: {numbers}.")
+
+        road = nearest_evidence(roads, moment)
+
+        if road:
+            road_text = re.sub(
+                r"^Дорога:\s*",
+                "",
+                str(road.get("text", "")).strip(),
+                flags=re.IGNORECASE,
+            )
+
+            extra = []
+
+            if road.get("semantic_road_percent") is not None:
+                extra.append(
+                    "маска дороги "
+                    f"{road['semantic_road_percent']}%"
+                )
+
+            if road.get("confidence") is not None:
+                extra.append(
+                    "уверенность "
+                    f"{round(float(road['confidence']) * 100)}%"
+                )
+
+            suffix = (
+                f" ({', '.join(extra)})"
+                if extra
+                else ""
+            )
+
+            lines.append(
+                f"- Дорога: {road_text}{suffix}."
+            )
+        else:
+            lines.append("- Дорога: признаков не найдено.")
+
+        frame_texts = []
+
+        for item in ocr:
+            start = item["start"]
+
+            matches = (
+                item["frame_artifact"]
+                and item["frame_artifact"]
+                == frame["artifact"]
+            )
+
+            if not matches and start is not None:
+                matches = (
+                    abs(start - moment)
+                    <= KEY_FRAME_MATCH_TOLERANCE_SECONDS
+                )
+
+            if matches and item["text"] not in frame_texts:
+                frame_texts.append(item["text"])
+
+        if frame_texts:
+            lines.append(
+                "- Текст на кадре: "
+                + "; ".join(
+                    f"«{text}»"
+                    for text in frame_texts[:3]
+                )
+                + "."
+            )
+
+        nearby = [
+            item
+            for item in speech
+            if (
+                item["end"] >= (
+                    moment - KEY_FRAME_SPEECH_WINDOW_SECONDS
+                )
+                and item["start"] <= (
+                    moment + KEY_FRAME_SPEECH_WINDOW_SECONDS
+                )
+            )
+        ]
+
+        if nearby:
+            shown = closest_speech(nearby, moment)
+
+            lines.append("- Речь рядом:")
+
+            for item in shown:
+                lines.append(
+                    f"  - `{timestamp(item['start'])}` — "
+                    f"{item['text']}"
+                )
+
+            if len(nearby) > len(shown):
+                lines.append(
+                    f"  - Показаны {len(shown)} ближайших "
+                    f"из {len(nearby)} реплик."
+                )
+        else:
+            lines.append(
+                "- Речь рядом: реплик в окрестности нет."
+            )
+
+        lines.append("")
+
+    if len(frames) > KEY_FRAME_LIMIT:
+        lines.extend([
+            f"Показаны первые {KEY_FRAME_LIMIT} из "
+            f"{len(frames)} ключевых кадров.",
+            "",
+        ])
+
+    return lines
 
 
 def location_dossier_section(stages):
@@ -738,12 +1358,18 @@ def render_report(job):
         if stage_name == "audio_structure":
             excluded.add("windows")
 
+        if stage_name == "speech":
+            excluded.add("segments")
+
         if stage_name in (
             "ocr",
             "scene_objects",
             "visual_profile",
         ):
             excluded.add("frames")
+
+        if stage_name == "scene_objects":
+            excluded.add("unique_objects")
 
         stage_details = {
             key: value
@@ -825,9 +1451,40 @@ def render_report(job):
         lines.extend([
             f"### {interval(item)}",
             "",
-            block(effective_text(item)),
-            "",
         ])
+
+        segments = records(
+            mapping(item.get("data")).get("segments")
+        )
+        corrected = item.get("corrected_text")
+
+        if corrected is not None and corrected != item.get("text"):
+            lines.append(block(corrected))
+
+        elif segments:
+            for segment in segments[:500]:
+                text = str(
+                    segment.get("text", "")
+                ).strip()
+
+                if not text:
+                    continue
+
+                lines.append(
+                    f"- `{timestamp(segment.get('start'))}`"
+                    f" — {text}"
+                )
+
+            if len(segments) > 500:
+                lines.append(
+                    f"Показаны первые 500 из "
+                    f"{len(segments)} реплик."
+                )
+
+        else:
+            lines.append(block(effective_text(item)))
+
+        lines.append("")
 
         if mapping(
             item.get("_provenance")
@@ -984,17 +1641,65 @@ def render_report(job):
             "",
         ])
 
-    append_section(
-        lines,
-        "16. Объекты и признаки сцены",
-        select_items(observations, {"scene_objects"}),
+    # ---------- Уникальные объекты ----------
+
+    scene_result = stage_result(
+        stages,
+        "scene_objects",
     )
 
-    append_section(
-        lines,
-        "17. Геометрия дороги",
-        select_items(observations, {"road_geometry"}),
+    scene_objects = records(
+        scene_result.get("unique_objects")
     )
+
+    if not scene_objects:
+        scene_objects = unique_objects_from_frames(
+            records(scene_result.get("frames"))
+        )
+
+    lines.extend([
+        "## 16. Уникальные объекты и ориентиры",
+        "",
+        "Список типов объектов, найденных на кадрах видео. "
+        "Модель размечает классы, а не отдельные экземпляры, "
+        "поэтому один пункт может объединять несколько "
+        "похожих объектов. Таймкод указывает на лучший кадр.",
+        "",
+    ])
+
+    if scene_objects:
+        for category in CATEGORY_ORDER:
+            items = [
+                item
+                for item in scene_objects
+                if item.get("category") == category
+            ]
+
+            if not items:
+                continue
+
+            lines.extend([
+                f"### {CATEGORY_LABELS_RU.get(category, category)}",
+                "",
+            ])
+
+            for item in items:
+                lines.append(
+                    f"- **{item.get('label_ru') or item.get('label')}**"
+                    f" — {item.get('frame_count', 0)} кадр.; "
+                    f"до {item.get('max_area_percent', 0)}% кадра; "
+                    f"лучший кадр `{timestamp(item.get('best_timestamp'))}`."
+                )
+
+            lines.append("")
+    else:
+        lines.extend([
+            "Уникальные объекты не найдены или этап "
+            "«Объекты и признаки места» не завершён.",
+            "",
+        ])
+
+    lines.extend(key_frames_section(stages, observations))
 
     append_section(
         lines,

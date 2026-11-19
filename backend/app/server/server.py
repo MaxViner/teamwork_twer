@@ -405,3 +405,9 @@ def export_markdown_report(job_id: str):
         },
     )
 
+@appServer.get("/health")
+async def health():
+    return {
+        "status": "ok",
+        "service": "video-service"
+    }

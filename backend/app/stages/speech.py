@@ -1,8 +1,9 @@
 """Распознавание речи.
 
 Из превью извлекается аудио (WAV 16 кГц), модель faster-whisper
-переводит речь в текст с таймкодами. Каждый непустой фрагмент
-становится наблюдением с языком и уверенностью распознавания.
+переводит речь в текст с таймкодами. Все реплики складываются
+в одно наблюдение-сводку со списком сегментов: так карточка
+занимает одну строку интерфейса, а таймкоды остаются доступны.
 """
 
 from functools import lru_cache
@@ -60,10 +61,9 @@ def extract_speech(
         str(audio),
         language=options.get("language") or None,
         vad_filter=True,
-        word_timestamps=True,
     )
 
-    observations = []
+    speech_segments = []
     offset = prepared.get("audio_start", 0.0)
     duration = prepared["duration"]
 
@@ -86,71 +86,73 @@ def extract_speech(
         if not text:
             continue
 
-        item = _build_segment(
-            folder=folder,
-            audio=audio,
-            duration=duration,
-            offset=offset,
-            segment=segment,
-            options=options,
-            info=info,
+        start = _clamp(
+            float(segment.start) + offset,
+            duration,
+        )
+        end = _clamp(
+            float(segment.end) + offset,
+            duration,
+            minimum=start,
         )
 
-        if item:
-            observations.append(item)
+        speech_segments.append({
+            "start": round(start, 3),
+            "end": round(end, 3),
+            "text": text,
+        })
 
     progress(100.0, "Распознавание речи завершено")
-    
+
+    observations = _build_observations(
+        folder=folder,
+        audio=audio,
+        segments=speech_segments,
+        options=options,
+        info=info,
+    )
+
     return {
         "language": info.language,
         "language_probability": float(info.language_probability),
+        "segment_count": len(speech_segments),
+        "segments": speech_segments,
         "observations": observations,
     }
 
 
-def _build_segment(
+def _build_observations(
     folder: Path,
     audio: Path,
-    duration: float,
-    offset: float,
-    segment,
+    segments: list[dict],
     options: dict,
     info,
-) -> dict | None:
-    text = segment.text.strip()
+) -> list[dict]:
+    """Складывает все реплики в одно наблюдение-сводку."""
 
-    if not text:
-        return None
+    if not segments:
+        return []
 
-    start = _clamp(float(segment.start) + offset, duration)
-    end = _clamp(float(segment.end) + offset, duration, minimum=start)
-
-    return observation(
-        source="speech",
-        start=start,
-        end=end,
-        text=text,
-        artifact=relative(folder, audio),
-        extractor="faster-whisper",
-        data={
-            "model": options["whisper_model"],
-            "version": package_version("faster-whisper"),
-            "language": info.language,
-            "words": _build_words(segment.words or [], duration, offset),
-            "time_is_approximate": True,
-        },
-    )
-
-
-def _build_words(words, duration: float, offset: float) -> list[dict]:
     return [
-        {
-            "word": word.word,
-            "start": _clamp(float(word.start) + offset, duration),
-            "end": _clamp(float(word.end) + offset, duration),
-            "probability": float(word.probability),
-        }
-        for word in words
+        observation(
+            source="speech",
+            start=segments[0]["start"],
+            end=segments[-1]["end"],
+            text="\n".join(
+                item["text"]
+                for item in segments
+            ),
+            artifact=relative(folder, audio),
+            extractor="faster-whisper",
+            data={
+                "model": options["whisper_model"],
+                "version": package_version("faster-whisper"),
+                "language": info.language,
+                "segment_count": len(segments),
+                "segments": segments,
+                "time_is_approximate": True,
+            },
+        )
     ]
 
 
