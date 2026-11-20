@@ -9,3 +9,5 @@ faster-whisper
 easyocr
 transformers
 torch
+
+osm search plus

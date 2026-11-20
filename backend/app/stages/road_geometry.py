@@ -15,13 +15,14 @@ import cv2
 import numpy as np
 
 from app.errors import SkipStage
-from app.media.frames import stage_frames
+from app.media.frames import analysis_frame_count, stage_frames
 from app.observations import observation
 
 
 ROAD_SEMANTIC_LABELS = {"road", "path", "bridge"}
 SEMANTIC_ROAD_MIN_PERCENT = 1.0
 EVIDENCE_TOLERANCE_SECONDS = 0.2
+CONTEXT_TOLERANCE_SECONDS = 0.75
 
 
 def extract_road_geometry(
@@ -46,10 +47,7 @@ def extract_road_geometry(
         video=video,
         duration=duration,
         stages=stages,
-        count=max(1, min(12, int(options.get(
-            "max_frames",
-            12,
-        )))),
+        count=analysis_frame_count(options),
         prefix="road",
     )
 
@@ -66,6 +64,7 @@ def extract_road_geometry(
 
     road_evidence = _scene_road_evidence(stages)
     visual_metrics = _visual_metrics(stages)
+    scene_context = _scene_context(stages)
 
     for index, frame in enumerate(frames):
         progress(
@@ -127,6 +126,15 @@ def extract_road_geometry(
                     float(evidence),
                     2,
                 )
+
+            geometry["timestamp"] = round(
+                float(frame["timestamp"]),
+                3,
+            )
+            geometry["surroundings"] = _nearest_objects(
+                scene_context,
+                frame["timestamp"],
+            )
 
             geometries.append(geometry)
 
@@ -297,6 +305,7 @@ def analyse_road(image) -> dict | None:
 
     return {
         "direction": direction,
+        "curve_label": _curve_label(direction, curvature),
         "curvature": round(curvature, 8),
         "left_curve": round(left_curve, 8),
         "right_curve": round(right_curve, 8),
@@ -312,6 +321,23 @@ def analyse_road(image) -> dict | None:
         "markings": markings,
         "confidence": round(float(confidence), 2),
     }
+
+
+def _curve_label(direction: str, curvature: float) -> str:
+    """Словесная сила изгиба для отчёта и интерфейса."""
+    if direction == "прямая дорога":
+        return "прямой участок"
+
+    if direction == "неоднозначная геометрия дороги":
+        return "изгиб не определён"
+
+    if curvature < 0.00015:
+        return "плавный изгиб"
+
+    if curvature < 0.0005:
+        return "заметный изгиб"
+
+    return "крутой изгиб"
 
 
 def detect_road_lines(image):
@@ -495,6 +521,14 @@ def _summarize(
             "detected_frames": 0,
             "sampled_frames": sampled_frames,
             "detection_ratio": 0.0,
+            "surroundings": [],
+            "sequence": {
+                "text": "Дорога не обнаружена.",
+                "directions": [],
+                "s_curve": False,
+                "turn_count": 0,
+                "segments": [],
+            },
         }
 
     directions = {}
@@ -556,6 +590,8 @@ def _summarize(
     if ambiguous:
         confidence *= 0.5
 
+    sequences = _direction_sequence(geometries)
+
     return {
         "road_detected": road_detected,
         "weak_support": not road_detected,
@@ -582,28 +618,199 @@ def _summarize(
             if geometry["markings"]["white"] > 1
             or geometry["markings"]["yellow"] > 1
         ),
+        "curve_labels": dict(Counter(
+            geometry.get("curve_label")
+            for geometry in geometries
+            if geometry.get("curve_label")
+        )),
+        "surroundings": _surroundings_summary(geometries),
+        "sequence": sequences,
         "confidence": round(confidence, 2),
+    }
+
+
+def _surroundings_summary(
+    geometries: list[dict],
+) -> list[dict]:
+    """Что видно рядом с дорогой на подтверждённых кадрах."""
+    collected = {}
+
+    for geometry in geometries:
+        for item in geometry.get("surroundings") or []:
+            label = (
+                item.get("label_ru")
+                or item.get("label")
+            )
+
+            if not label:
+                continue
+
+            entry = collected.setdefault(label, {
+                "label": label,
+                "frame_count": 0,
+                "max_area_percent": 0.0,
+            })
+
+            entry["frame_count"] += 1
+            entry["max_area_percent"] = max(
+                entry["max_area_percent"],
+                float(item.get("area_percent") or 0),
+            )
+
+    result = list(collected.values())
+
+    for item in result:
+        item["max_area_percent"] = round(
+            item["max_area_percent"],
+            1,
+        )
+
+    result.sort(
+        key=lambda item: (
+            -item["frame_count"],
+            -item["max_area_percent"],
+            item["label"],
+        )
+    )
+
+    return result[:10]
+
+
+def _direction_sequence(
+    geometries: list[dict],
+) -> dict:
+    """
+    Описывает, как меняется направление дороги между кадрами.
+
+    Это не маршрут: кадры могут быть сняты в разные моменты и с
+    разных ракурсов. Но повторяющиеся повороты помогают отличить
+    прямой участок от S-образного или серии поворотов.
+    """
+    ordered = sorted(
+        geometries,
+        key=lambda item: float(
+            item.get("timestamp") or 0
+        ),
+    )
+
+    segments = []
+
+    for geometry in ordered:
+        direction = geometry.get("direction") or (
+            "неоднозначная геометрия дороги"
+        )
+        timestamp = round(
+            float(geometry.get("timestamp") or 0),
+            3,
+        )
+
+        if (
+            segments
+            and segments[-1]["direction"] == direction
+        ):
+            segments[-1]["end"] = timestamp
+            segments[-1]["frames"] += 1
+
+        else:
+            segments.append({
+                "direction": direction,
+                "curve_label": geometry.get(
+                    "curve_label"
+                ),
+                "start": timestamp,
+                "end": timestamp,
+                "frames": 1,
+            })
+
+    directions = [
+        segment["direction"]
+        for segment in segments
+    ]
+
+    turns = [
+        direction
+        for direction in directions
+        if direction in (
+            "поворот влево",
+            "поворот вправо",
+        )
+    ]
+
+    has_left = "поворот влево" in turns
+    has_right = "поворот вправо" in turns
+    s_curve = has_left and has_right
+
+    if s_curve:
+        text = (
+            "Встречаются повороты в обе стороны — "
+            "возможен S-образный или комбинированный участок."
+        )
+
+    elif len(turns) >= 2:
+        text = (
+            "Поворот повторяется в одном направлении: "
+            f"{turns[0].lower()}."
+        )
+
+    elif len(segments) > 1:
+        text = (
+            "Направление меняется: "
+            + " → ".join(directions)
+            + "."
+        )
+
+    elif directions:
+        text = f"На всех кадрах: {directions[0].lower()}."
+
+    else:
+        text = "Последовательность направлений не определена."
+
+    return {
+        "text": text,
+        "directions": directions,
+        "s_curve": s_curve,
+        "turn_count": max(
+            0,
+            len(turns) - 1,
+        ),
+        "segments": segments[:24],
     }
 
 
 def _geometry_text(geometry: dict) -> str:
     parts = [
         f"Дорога: {geometry['direction']}",
-        geometry["width_label"],
     ]
 
-    markings = geometry["markings"]
+    if geometry.get("curve_label"):
+        parts.append(geometry["curve_label"])
 
-    if markings["white"] > 1:
+    if geometry.get("width_label"):
+        parts.append(geometry["width_label"])
+
+    markings = geometry.get("markings") or {}
+
+    if markings.get("white", 0) > 1:
         parts.append("белая разметка")
 
-    if markings["yellow"] > 1:
+    if markings.get("yellow", 0) > 1:
         parts.append("жёлтая разметка")
 
     if geometry["vanishing_ratio"] is not None:
         parts.append(
             "линия схода на "
             f"{geometry['vanishing_ratio'] * 100:.0f}% высоты"
+        )
+
+    surroundings = [
+        item.get("label_ru") or item.get("label")
+        for item in (geometry.get("surroundings") or [])[:4]
+        if item.get("label_ru") or item.get("label")
+    ]
+
+    if surroundings:
+        parts.append(
+            "рядом: " + ", ".join(surroundings)
         )
 
     return "; ".join(parts) + "."
@@ -664,6 +871,93 @@ def _scene_road_evidence(
     evidence.sort(key=lambda item: item[0])
 
     return evidence or None
+
+
+def _scene_context(
+    stages: dict,
+) -> list[tuple[float, list[dict]]] | None:
+    """Объекты рядом с дорогой из семантической маски."""
+    result = stages.get("scene_objects", {}).get(
+        "result"
+    ) or {}
+
+    frames = result.get("frames")
+
+    if not isinstance(frames, list) or not frames:
+        return None
+
+    context = []
+    skipped = {
+        "road",
+        "path",
+        "bridge",
+        "sky",
+    }
+
+    for frame in frames:
+        if not isinstance(frame, dict):
+            continue
+
+        timestamp = frame.get("timestamp")
+
+        if timestamp is None:
+            continue
+
+        objects = []
+
+        for item in frame.get("objects") or []:
+            if not isinstance(item, dict):
+                continue
+
+            if item.get("label") in skipped:
+                continue
+
+            objects.append({
+                "label": item.get("label"),
+                "label_ru": (
+                    item.get("label_ru")
+                    or item.get("label")
+                ),
+                "area_percent": round(
+                    float(item.get("area_percent") or 0),
+                    2,
+                ),
+            })
+
+        objects.sort(
+            key=lambda item: -item["area_percent"]
+        )
+
+        context.append((
+            float(timestamp),
+            objects[:5],
+        ))
+
+    context.sort(key=lambda item: item[0])
+
+    return context or None
+
+
+def _nearest_objects(
+    context: list[tuple[float, list[dict]]] | None,
+    timestamp: float,
+) -> list[dict]:
+    """Ближайшие придорожные объекты или пустой список."""
+    if not context:
+        return []
+
+    nearest = min(
+        context,
+        key=lambda item: abs(item[0] - timestamp),
+    )
+
+    if (
+        abs(nearest[0] - timestamp)
+        > CONTEXT_TOLERANCE_SECONDS
+    ):
+        return []
+
+    return nearest[1]
 
 
 def _visual_metrics(
@@ -799,9 +1093,14 @@ def _build_observations(
             "text": _geometry_text(geometry),
             "artifact": detection["artifact"],
             "direction": geometry["direction"],
+            "curve_label": geometry.get("curve_label"),
             "width_label": geometry["width_label"],
             "markings": geometry["markings"],
             "confidence": geometry["confidence"],
+            "surroundings": geometry.get(
+                "surroundings",
+                [],
+            ),
             "evidence_source": geometry.get(
                 "evidence_source"
             ),
@@ -840,6 +1139,20 @@ def _build_observations(
             f"({count} кадр.)"
             for name, count in evidence_sources.items()
         ) + "."
+
+    surroundings = summary.get("surroundings") or []
+
+    if surroundings:
+        text += " Рядом с дорогой: " + ", ".join(
+            f"{item['label']} "
+            f"({item['frame_count']} кадр.)"
+            for item in surroundings[:6]
+        ) + "."
+
+    sequence = summary.get("sequence") or {}
+
+    if len(segments) >= 2 and sequence.get("text"):
+        text += " " + sequence["text"]
 
     return [
         observation(

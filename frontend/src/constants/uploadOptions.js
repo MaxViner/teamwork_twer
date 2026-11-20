@@ -11,7 +11,7 @@ export const DEFAULT_UPLOAD_OPTIONS = {
 
 
     language: null,
-    max_frames: 12,
+    max_frames: 500,
     whisper_model: "small",
 };
 

@@ -40,9 +40,9 @@ class AnalyzeOptions(BaseModel):
 
 
     max_frames: int = Field(
-        default=12,
+        default=500,
         ge=1,
-        le=50,
+        le=2000,
     )
 
 

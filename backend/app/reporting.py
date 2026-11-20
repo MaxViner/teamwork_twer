@@ -1,104 +1,149 @@
-"""Сборка Markdown-отчёта.
+"""Markdown-отчёт для поиска места съёмки.
 
-Отчёт читает сохранённые результаты этапов и складывает их в
-разделы: сведения о задании, локационное досье, метаданные и GPS,
-состояние анализаторов, речь, надписи, уникальные объекты, сводку
-по ключевым кадрам и ограничения интерпретации. Ничего заново
-не анализируется.
+Собирает уже сохранённые результаты этапов и превращает их в
+короткий отчёт: паспорт видео, самые сильные улики, локации с
+кадрами, геометрию дороги, текст, речь и готовые поисковые запросы.
+В конце добавлена машинно-читаемая сводка для интеллектуального
+поиска. Ничего заново не анализируется.
 """
 
 import json
-import math
 import re
 import unicodedata
 
 from collections import Counter
 from datetime import datetime, timezone
 
+from app.keyframes import (
+    collect_frames,
+    group_frames,
+    scene_intervals,
+)
 from app.stages.scene_objects import (
     CATEGORY_LABELS_RU,
     CATEGORY_ORDER,
     unique_objects_from_frames,
 )
+from app.utils.timecodes import numeric_time, timestamp
 
 
-# ============================================================
-# Названия этапов и типов наблюдений
-# ============================================================
+MAX_OCR_GROUPS = 160
+MAX_EVIDENCE_ITEMS = 80
+MAX_GROUP_FRAME_TIMES = 24
+MAX_MACHINE_GROUPS = 60
+ROAD_MATCH_TOLERANCE_SECONDS = 0.2
+GROUP_SPEECH_LIMIT = 4
 
-STAGE_NAMES = {
-    "prepare": "Подготовка видео",
-    "metadata": "Метаданные",
-    "scenes": "Разделение на сцены",
-    "speech": "Распознавание речи",
-    "audio_structure": "Звуковая структура",
-    "ocr": "Распознавание надписей",
-    "scene_objects": "Объекты и признаки места",
-    "visual_profile": "Визуальный профиль места",
-    "road_geometry": "Геометрия дороги",
-    "location_evidence": "Географические улики",
-    "visual": "Визуальные признаки",
-    "audio_events": "Звуковые события",
-    "structure": "Структура и повторения",
+DIRECT_EVIDENCE_KINDS = {
+    "coordinates",
+    "address",
+    "business",
+    "place_mention",
+    "phone",
+    "transport",
+    "link",
+    "license_plate",
+    "currency",
 }
 
-SOURCE_NAMES = {
-    "technical": "Технические сведения",
+EVIDENCE_RANK = {
+    "coordinates": 0,
+    "address": 1,
+    "business": 2,
+    "place_mention": 3,
+    "phone": 4,
+    "transport": 5,
+    "link": 6,
+    "license_plate": 7,
+    "currency": 8,
+    "units": 9,
+    "language": 10,
+    "device": 11,
+    "created_at": 12,
+}
+
+COVERED_ELSEWHERE = {
+    "visual_profile",
+    "audio_profile",
+    "road_geometry",
+    "scene_profile",
+    "repetition",
+}
+
+GENERIC_OBJECTS = {
+    "road",
+    "path",
+    "sky",
+    "tree",
+    "grass",
+    "plant",
+    "building",
+    "house",
+    "earth",
+    "wall",
+    "field",
+    "hill",
+    "mountain",
+    "water",
+    "river",
+    "lake",
+    "sea",
+    "car",
+    "bus",
+    "truck",
+    "pole",
+    "fence",
+    "streetlight",
+    "signboard",
+    "sand",
+    "rock",
+    "bridge",
+}
+
+STAGE_NAMES = {
+    "prepare": "Подготовка",
     "metadata": "Метаданные",
-    "scene": "Сцена",
+    "scenes": "Сцены",
     "speech": "Речь",
-    "ocr": "Надпись",
     "audio_structure": "Звуковая структура",
-    "audio_event": "Звуковое событие",
-    "visual": "Визуальное наблюдение",
+    "ocr": "Текст на кадрах",
+    "structure": "Повторы",
+    "scene_objects": "Объекты",
     "visual_profile": "Визуальный профиль",
-    "relation": "Пространственное отношение",
-    "sequence": "Последовательность",
-    "reappearance": "Повторное появление",
-    "scene_objects": "Объекты сцены",
     "road_geometry": "Геометрия дороги",
-    "location_evidence": "Географическая улика",
+    "location_evidence": "Географические улики",
 }
 
 STATUS_NAMES = {
-    "created": "Создано",
-    "pending": "Ожидание",
-    "queued": "В очереди",
-    "running": "Выполняется",
-    "completed": "Завершено",
-    "partial": "Частичный результат",
-    "failed": "Ошибка",
-    "skipped": "Пропущено",
+    "created": "создано",
+    "pending": "ожидает",
+    "queued": "в очереди",
+    "running": "выполняется",
+    "completed": "готово",
+    "partial": "частично",
+    "failed": "ошибка",
+    "skipped": "пропущено",
 }
 
-REVIEW_NAMES = {
-    "unreviewed": "Не проверено",
-    "accepted": "Подтверждено пользователем",
-    "rejected": "Отклонено пользователем",
-}
-
-CATEGORY_NAMES = {
-    "building": "Здания",
-    "infrastructure": "Инфраструктура",
+KIND_NAMES = {
+    "coordinates": "Координаты",
+    "address": "Адрес",
+    "business": "Бренд или организация",
+    "place_mention": "Упоминание места",
+    "phone": "Телефон",
     "transport": "Транспорт",
-    "sign": "Знаки и указатели",
-    "terrain": "Рельеф",
-    "vegetation": "Растительность",
-    "water": "Водные объекты",
-    "other": "Другие объекты",
+    "link": "Ссылка",
+    "license_plate": "Номерной знак",
+    "currency": "Валюта",
+    "units": "Единицы измерения",
+    "language": "Язык",
+    "device": "Устройство",
+    "created_at": "Дата файла",
 }
-
-KNOWN_SOURCES = set(SOURCE_NAMES)
-
-KEY_FRAME_SPEECH_WINDOW_SECONDS = 10
-KEY_FRAME_SPEECH_LIMIT = 5
-KEY_FRAME_LIMIT = 60
-KEY_FRAME_MATCH_TOLERANCE_SECONDS = 0.75
-ROAD_MATCH_TOLERANCE_SECONDS = 0.2
 
 
 # ============================================================
-# Вспомогательные функции
+# Базовые помощники
 # ============================================================
 
 def mapping(value):
@@ -119,12 +164,7 @@ def records(value):
 
 
 def block(value, language="text"):
-    """
-    Помещает текст в блок Markdown.
-
-    Длина ограждения выбирается так, чтобы обратные кавычки
-    внутри извлечённого текста не закрывали блок.
-    """
+    """Помещает текст в блок Markdown без поломки кавычек."""
     text = str(value)
 
     longest = max(
@@ -152,74 +192,7 @@ def json_block(value):
     )
 
 
-def numeric_time(value):
-    try:
-        number = float(value)
-    except (TypeError, ValueError, OverflowError):
-        return None
-
-    if not math.isfinite(number) or number < 0:
-        return None
-
-    return number
-
-
-def timestamp(value):
-    seconds = numeric_time(value)
-
-    if seconds is None:
-        return "не задано"
-
-    milliseconds = round(seconds * 1000)
-
-    hours, remainder = divmod(
-        milliseconds,
-        3_600_000,
-    )
-    minutes, remainder = divmod(
-        remainder,
-        60_000,
-    )
-    seconds, milliseconds = divmod(
-        remainder,
-        1000,
-    )
-
-    return (
-        f"{hours:02d}:{minutes:02d}:"
-        f"{seconds:02d}.{milliseconds:03d}"
-    )
-
-
-def interval(item):
-    if item.get("source") == "technical":
-        return "весь файл"
-
-    start = item.get("start")
-    end = item.get("end")
-
-    if start == end:
-        return timestamp(start)
-
-    return f"{timestamp(start)} — {timestamp(end)}"
-
-
-def sort_key(item):
-    value = numeric_time(item.get("start"))
-
-    return (
-        value is None,
-        value if value is not None else 0,
-        str(item.get("id", "")),
-    )
-
-
 def effective_text(item):
-    """
-    Использует исправление, если оно существует.
-
-    Пустая строка тоже считается сохранённым исправлением.
-    """
     corrected = item.get("corrected_text")
 
     if corrected is not None:
@@ -229,33 +202,160 @@ def effective_text(item):
 
 
 def normalized_text(value):
-    text = unicodedata.normalize(
-        "NFKC",
-        str(value),
-    )
+    text = unicodedata.normalize("NFKC", str(value))
 
     return " ".join(text.casefold().split())
 
 
-def is_previous_result(stage):
-    result_run_id = stage.get("result_run_id")
-    run_id = stage.get("run_id")
+# ============================================================
+# Чистка упоминаний места
+# ============================================================
 
-    return bool(
-        result_run_id
-        and run_id
-        and result_run_id != run_id
+PLACE_KEYWORD_RE = re.compile(
+    r"^(?:област|обл\.|район|кра[йяю]|республик|деревн|посёл|"
+    r"посел|сел[оа]|станиц|хутор|город|полуостров|озер|"
+    r"рек[аиу]|гор[аыу]|хребет|залив|порт|станци|вокзал|"
+    r"аэропорт|метро)",
+    re.IGNORECASE,
+)
+
+REGION_KEYWORD_RE = re.compile(
+    r"^(?:област|обл\.|район|кра[йяю]|республик)",
+    re.IGNORECASE,
+)
+
+# Слова, которые не могут быть названием места. Нужны, чтобы
+# «вот деревня была» не превращалось в «вот деревня».
+PLACE_STOPWORDS = {
+    "вот", "там", "тут", "здесь", "эта", "это", "этот", "такая",
+    "такой", "была", "был", "было", "были", "будет", "есть",
+    "начинается", "заканчивается", "стоит", "видно", "видна",
+    "и", "а", "но", "в", "во", "на", "из", "с", "со", "у", "к",
+    "ко", "по", "о", "об", "от", "до", "за", "под", "над", "при",
+    "для", "что", "как", "где", "когда", "тоже", "ещё", "еще",
+    "уже", "очень", "почти", "через", "около", "возле", "рядом",
+    "прямо", "сейчас", "потом", "тогда", "туда", "сюда", "назад",
+    "вперёд", "вперед", "дальше", "ближе", "самая", "самый",
+    "самое", "весь", "вся", "всё", "все", "один", "одна", "одно",
+}
+
+PLACE_ADJECTIVE_RE = re.compile(
+    r"(?:ская|ской|скую|ский|ского|скому|ском|ая|ой|ую|ий|"
+    r"ого|ому|им|ом|ые|ых|ым|ыми)$",
+    re.IGNORECASE,
+)
+
+WORD_RE = re.compile(r"[A-Za-zА-Яа-яЁё0-9\-]+")
+
+
+def _looks_named(token):
+    """Название места обычно с заглавной или похоже на adjective."""
+    if not token or token.casefold() in PLACE_STOPWORDS:
+        return False
+
+    if token[:1].isupper():
+        return True
+
+    return bool(PLACE_ADJECTIVE_RE.search(token))
+
+
+def place_tokens(value):
+    """
+    Достаёт короткие названия мест из длинной фразы.
+
+    «Приехал я в деревню, на дачу, в Тирскую область» даёт
+    «Тирскую область», а «ну вот деревня была» не даёт ничего.
+    """
+    tokens = WORD_RE.findall(str(value))
+    found = []
+
+    for index, token in enumerate(tokens):
+        if not PLACE_KEYWORD_RE.match(token):
+            continue
+
+        previous = tokens[index - 1] if index > 0 else None
+
+        if (
+            previous
+            and _looks_named(previous)
+            and not PLACE_KEYWORD_RE.match(previous)
+        ):
+            found.append(f"{previous} {token}")
+
+        following = (
+            tokens[index + 1]
+            if index + 1 < len(tokens)
+            else None
+        )
+
+        if (
+            following
+            and following[:1].isupper()
+            and following.casefold() not in PLACE_STOPWORDS
+            and not PLACE_KEYWORD_RE.match(following)
+        ):
+            found.append(f"{token} {following}")
+
+    result = []
+
+    for item in found:
+        cleaned = " ".join(item.split())
+        key = normalized_text(cleaned)
+
+        if key and key not in {
+            normalized_text(existing)
+            for existing in result
+        }:
+            result.append(cleaned)
+
+    return result
+
+
+def clean_place(value):
+    """Одно самое конкретное название места или None."""
+    found = place_tokens(value)
+
+    if not found:
+        return None
+
+    # Сначала регион/район, потом остальное: это полезнее
+    # для поиска на карте.
+    found.sort(
+        key=lambda item: (
+            0 if REGION_KEYWORD_RE.match(item.split()[-1]) else 1,
+            -len(item),
+        )
+    )
+
+    best = found[0]
+
+    if best[:1].islower():
+        best = best[0].upper() + best[1:]
+
+    return best
+
+
+def speech_time_for(value, speech):
+    """Ищет реплику, где прозвучало упоминание, и берёт её время."""
+    key = normalized_text(value)
+
+    if not key:
+        return None
+
+    for segment in speech:
+        if key in normalized_text(segment.get("text")):
+            return segment.get("start")
+
+    return None
+
+
+def stage_result(stages, name):
+    return mapping(
+        mapping(stages.get(name)).get("result")
     )
 
 
 def collect_observations(job):
-    """
-    Собирает текущие доступные наблюдения.
-
-    История попыток повторно не добавляется, чтобы не
-    дублировать результаты. Метаданные и GPS включаются:
-    это самые сильные признаки места съёмки.
-    """
     observations = []
 
     for stage_name, raw_stage in mapping(
@@ -265,260 +365,386 @@ def collect_observations(job):
 
         for original in records(stage.get("observations")):
             item = dict(original)
-
-            item["_provenance"] = {
-                "stage": stage_name,
-                "stage_status": stage.get("status"),
-                "run_id": stage.get("run_id"),
-                "result_run_id": stage.get("result_run_id"),
-                "previous_result": is_previous_result(stage),
-            }
-
+            item["_stage"] = stage_name
+            item["_stage_status"] = stage.get("status")
             observations.append(item)
 
-    return sorted(observations, key=sort_key)
+    observations.sort(
+        key=lambda item: (
+            numeric_time(item.get("start")) is None,
+            numeric_time(item.get("start")) or 0,
+        )
+    )
+
+    return observations
 
 
-def select_items(observations, sources):
+def _in_range(value, start, end, pad=1.0):
+    moment = numeric_time(value)
+
+    if moment is None:
+        return False
+
+    return (start - pad) <= moment <= (end + pad)
+
+
+def _table_cell(value):
+    return str(value).replace("|", "\\|").replace(
+        "\n",
+        " ",
+    )
+
+
+def _first_stream(info, kind):
+    for stream in records(info.get("streams")):
+        if stream.get("codec_type") == kind:
+            return stream
+
+    return {}
+
+
+def _video_size(info):
+    stream = _first_stream(info, "video")
+    width = stream.get("width")
+    height = stream.get("height")
+
+    if width and height:
+        return f"{width}×{height}"
+
+    return None
+
+
+def _short_list(values, limit):
     return [
-        item
-        for item in observations
-        if item.get("source") in sources
-    ]
+        value
+        for value in values
+        if value
+    ][:limit]
 
 
-def append_observation(lines, item, number):
-    source = item.get("source", "unknown")
-    source_name = SOURCE_NAMES.get(source, "Другой источник")
+# ============================================================
+# Паспорт видео
+# ============================================================
 
-    lines.extend([
-        f"### {number}. {source_name} · {interval(item)}",
-        "",
-        "Оригинальный результат:",
-        block(item.get("text", "")),
-        "",
-    ])
+def video_passport(job, stages):
+    prepared = stage_result(stages, "prepare")
+    metadata = stage_result(stages, "metadata")
+    source_info = mapping(prepared.get("source_info"))
+    preview_info = mapping(prepared.get("preview_info"))
 
-    if item.get("corrected_text") is not None:
-        lines.extend([
-            "Исправление пользователя:",
-            block(item["corrected_text"]),
-            "",
-        ])
-
-    review = item.get("review", "unreviewed")
-
-    lines.extend([
-        "Статус проверки:",
-        block(REVIEW_NAMES.get(review, review)),
-        "",
-    ])
-
-    provenance = mapping(item.get("_provenance"))
-
-    if provenance.get("previous_result"):
-        lines.extend([
-            "**Внимание:** показан сохранённый результат "
-            "предыдущей попытки этого этапа.",
-            "",
-        ])
-
-    if item.get("recognition_score") is not None:
-        lines.extend([
-            "Оценка распознавания:",
-            block(item["recognition_score"]),
-            "",
-            "Эта оценка не является вероятностью геолокации.",
-            "",
-        ])
-
-    lines.extend([
-        "Происхождение и артефакты:",
-        json_block({
-            "observation_id": item.get("id"),
-            "source": source,
-            "extractor": item.get("extractor"),
-            **provenance,
-            "artifact": item.get("artifact"),
-            "frame_artifact": item.get("frame_artifact"),
-            "bbox_normalized": item.get("bbox"),
-            "reviewed_at": item.get("reviewed_at"),
-        }),
-        "",
-    ])
-
-    data = mapping(item.get("data"))
-    segments = records(data.get("segments"))
-
-    if segments and source != "speech":
-        lines.extend([
-            "Фрагменты:",
-            "",
-        ])
-
-        for segment in segments[:120]:
-            text = str(
-                segment.get("text", "")
-            ).strip()
-
-            if not text:
-                continue
-
-            lines.append(
-                f"- `{timestamp(segment.get('start'))}`"
-                f" — {text}"
-            )
-
-        if len(segments) > 120:
-            lines.append(
-                f"Показаны первые 120 из "
-                f"{len(segments)} фрагментов."
-            )
-
-        lines.append("")
-
-    if segments:
-        data = {
-            key: value
-            for key, value in data.items()
-            if key != "segments"
-        }
-
-    if data:
-        lines.extend([
-            "Дополнительные данные анализатора:",
-            json_block(data),
-            "",
-        ])
-
-    # Не теряем дополнительные поля новых анализаторов.
-    handled = {
-        "id",
-        "source",
-        "start",
-        "end",
-        "text",
-        "corrected_text",
-        "review",
-        "recognition_score",
-        "extractor",
-        "artifact",
-        "frame_artifact",
-        "bbox",
-        "reviewed_at",
-        "data",
-        "_provenance",
-    }
-
-    extra = {
-        key: value
-        for key, value in item.items()
-        if key not in handled
-    }
-
-    if extra:
-        lines.extend([
-            "Другие сохранённые поля:",
-            json_block(extra),
-            "",
-        ])
-
-
-def append_section(lines, title, items):
-    lines.extend([
-        f"## {title}",
-        "",
-    ])
-
-    if not items:
-        lines.extend([
-            "Сохранённых наблюдений нет. Причина может быть "
-            "в отключённом, пропущенном или завершившемся "
-            "ошибкой этапе. Смотрите состояние анализаторов.",
-            "",
-        ])
-
-        return
-
-    for number, item in enumerate(items, start=1):
-        append_observation(lines, item, number)
-
-
-def stage_result(stages, name):
-    return mapping(
-        mapping(stages.get(name)).get("result")
+    duration = numeric_time(prepared.get("duration"))
+    stream = _first_stream(
+        source_info or preview_info,
+        "video",
     )
 
+    return {
+        "name": job.get("name"),
+        "job_id": job.get("id"),
+        "status": job.get("status"),
+        "created_at": job.get("created_at"),
+        "duration_seconds": (
+            round(duration, 3)
+            if duration is not None
+            else None
+        ),
+        "duration": timestamp(duration),
+        "resolution": _video_size(
+            source_info or preview_info
+        ),
+        "fps": stream.get("r_frame_rate"),
+        "has_audio": prepared.get("has_audio"),
+        "device": metadata.get("device"),
+        "file_created_at": metadata.get("created_at"),
+        "sha256": prepared.get("sha256"),
+        "source_tags": metadata.get("tags") or {},
+    }
 
-def stage_frames(stages, name):
-    """Возвращает только словари кадров из результата этапа."""
-    return records(
-        stage_result(stages, name).get("frames")
-    )
+
+def gps_items(stages):
+    metadata = stage_result(stages, "metadata")
+    dossier = stage_result(
+        stages,
+        "location_evidence",
+    ).get("dossier") or {}
+
+    items = []
+    seen = set()
+
+    for item in records(metadata.get("gps")):
+        try:
+            latitude = float(item["latitude"])
+            longitude = float(item["longitude"])
+
+        except (KeyError, TypeError, ValueError):
+            continue
+
+        key = (round(latitude, 6), round(longitude, 6))
+
+        if key in seen:
+            continue
+
+        seen.add(key)
+        items.append({
+            "latitude": latitude,
+            "longitude": longitude,
+            "origin": "metadata",
+        })
+
+    for item in records(dossier.get("coordinates")):
+        try:
+            latitude = float(item["latitude"])
+            longitude = float(item["longitude"])
+
+        except (KeyError, TypeError, ValueError):
+            continue
+
+        key = (round(latitude, 6), round(longitude, 6))
+
+        if key in seen:
+            continue
+
+        seen.add(key)
+        items.append({
+            "latitude": latitude,
+            "longitude": longitude,
+            "origin": item.get("origin") or "text",
+        })
+
+    return items
 
 
-def key_frame_items(stages):
-    """
-    Собирает ключевые кадры из всех визуальных этапов.
+# ============================================================
+# Текст, речь, дорога
+# ============================================================
 
-    Один и тот же таймкод может встречаться в объектах, визуальном
-    профиле и OCR. Все сведения объединяются в одну запись, чтобы
-    отчёт не повторял кадр несколько раз.
-    """
+def collect_ocr(observations):
+    """Уникальные надписи без мусора и повторов."""
     collected = {}
 
-    for stage_name in (
-        "visual_profile",
-        "scene_objects",
-        "ocr",
-    ):
-        for frame in stage_frames(stages, stage_name):
-            moment = numeric_time(frame.get("timestamp"))
+    for item in observations:
+        if item.get("source") != "ocr":
+            continue
 
-            if moment is None:
+        if item.get("review") == "rejected":
+            continue
+
+        text = " ".join(effective_text(item).split())
+
+        if len(text) < 2:
+            continue
+
+        if not re.search(
+            r"[A-Za-zА-Яа-яЁё0-9]",
+            text,
+        ):
+            continue
+
+        score = item.get("recognition_score")
+
+        if score is not None and float(score) < 0.2:
+            continue
+
+        key = normalized_text(text)
+        moment = numeric_time(item.get("start"))
+
+        entry = collected.setdefault(key, {
+            "text": text,
+            "count": 0,
+            "times": [],
+            "score": None,
+            "frame_artifact": None,
+            "artifact": None,
+        })
+
+        entry["count"] += 1
+
+        if moment is not None:
+            entry["times"].append(round(moment, 3))
+
+        if score is not None:
+            entry["score"] = max(
+                entry["score"] or 0.0,
+                float(score),
+            )
+
+        if not entry["frame_artifact"]:
+            entry["frame_artifact"] = item.get(
+                "frame_artifact"
+            )
+
+        if not entry["artifact"]:
+            entry["artifact"] = item.get("artifact")
+
+    result = []
+
+    for entry in collected.values():
+        entry["times"] = sorted(set(entry["times"]))
+        entry["first_time"] = (
+            entry["times"][0]
+            if entry["times"]
+            else None
+        )
+        result.append(entry)
+
+    result.sort(
+        key=lambda item: (
+            item["first_time"] is None,
+            item["first_time"] or 0,
+            -item["count"],
+        )
+    )
+
+    return result
+
+
+def collect_speech(observations):
+    segments = []
+
+    for item in observations:
+        if item.get("source") != "speech":
+            continue
+
+        stored = records(
+            mapping(item.get("data")).get("segments")
+        )
+
+        if stored:
+            for segment in stored:
+                start = numeric_time(segment.get("start"))
+                text = str(segment.get("text", "")).strip()
+
+                if start is None or not text:
+                    continue
+
+                end = numeric_time(segment.get("end"))
+
+                segments.append({
+                    "start": start,
+                    "end": end if end is not None else start,
+                    "text": text,
+                })
+
+            continue
+
+        start = numeric_time(item.get("start"))
+        text = effective_text(item).strip()
+
+        if start is None or not text:
+            continue
+
+        end = numeric_time(item.get("end"))
+
+        segments.append({
+            "start": start,
+            "end": end if end is not None else start,
+            "text": text,
+        })
+
+    return sorted(
+        segments,
+        key=lambda item: item["start"],
+    )
+
+
+def collect_evidence(observations, speech=None):
+    """Читаемые улики из локационного досье без JSON-мусора."""
+    speech = speech or []
+    collected = {}
+
+    for item in observations:
+        if item.get("source") != "location_evidence":
+            continue
+
+        data = mapping(item.get("data"))
+        kind = str(data.get("kind") or "other")
+
+        if kind in COVERED_ELSEWHERE:
+            continue
+
+        text = effective_text(item).strip()
+        label = KIND_NAMES.get(kind, "Признак")
+        value = text
+
+        if ": " in text:
+            prefix, rest = text.split(": ", 1)
+
+            if prefix.strip():
+                label = prefix.strip()
+                value = rest.strip()
+
+        value = " ".join(value.split())
+
+        if not value:
+            continue
+
+        if kind == "place_mention":
+            value = clean_place(value)
+
+            if not value:
                 continue
 
-            key = round(moment, 3)
-            item = collected.setdefault(key, {
-                "timestamp": moment,
-                "artifact": None,
-                "objects": [],
-                "descriptors": {},
-                "metrics": {},
-            })
+        key = (kind, normalized_text(value))
+        start = numeric_time(item.get("start"))
+        end = numeric_time(item.get("end"))
+        confidence = data.get("confidence")
 
-            if not item["artifact"]:
-                item["artifact"] = frame.get("artifact")
+        if (
+            data.get("origin") == "speech"
+            and speech
+        ):
+            matched = speech_time_for(value, speech)
 
-            objects = records(frame.get("objects"))
+            if matched is not None:
+                start = matched
 
-            if objects:
-                item["objects"] = objects
+        entry = collected.setdefault(key, {
+            "kind": kind,
+            "label": label,
+            "value": value,
+            "origin": data.get("origin"),
+            "confidence": (
+                float(confidence)
+                if confidence is not None
+                else None
+            ),
+            "start": start,
+            "end": end,
+            "count": 0,
+            "frame_artifact": item.get("frame_artifact"),
+        })
 
-            descriptors = mapping(frame.get("descriptors"))
+        entry["count"] += 1
 
-            if descriptors:
-                item["descriptors"] = descriptors
+        if start is not None:
+            entry["start"] = (
+                start
+                if entry["start"] is None
+                else min(entry["start"], start)
+            )
 
-            metrics = mapping(frame.get("metrics"))
+        if end is not None:
+            entry["end"] = (
+                end
+                if entry["end"] is None
+                else max(entry["end"], end)
+            )
 
-            if metrics:
-                item["metrics"] = metrics
+    result = list(collected.values())
 
-    return [
-        collected[key]
-        for key in sorted(collected)
-    ]
+    result.sort(
+        key=lambda item: (
+            EVIDENCE_RANK.get(item["kind"], 20),
+            -(item["confidence"] or 0.0),
+            item["start"] is None,
+            item["start"] or 0,
+        )
+    )
+
+    return result[:MAX_EVIDENCE_ITEMS]
 
 
 def semantic_road_frames(stages):
-    """
-    Возвращает долю дороги по семантической маске для каждого кадра.
-
-    Для старых заданий это позволяет отбросить ложные срабатывания
-    геометрии дороги без повторного запуска этапа. Если маска
-    недоступна, возвращается None и решение не переопределяется.
-    """
     result = stage_result(stages, "scene_objects")
     method = result.get("method")
 
@@ -555,32 +781,26 @@ def semantic_road_frames(stages):
     return evidence or None
 
 
-def road_allowed_by_mask(evidence, moment):
-    """Проверяет кадр по семантической маске дороги."""
+def road_allowed(evidence, moment):
     if not evidence or moment is None:
         return True
 
-    nearest_key = None
-    nearest_diff = None
+    nearest_key = min(
+        evidence,
+        key=lambda key: abs(key - moment),
+        default=None,
+    )
 
-    for key in evidence:
-        diff = abs(key - moment)
-
-        if nearest_diff is None or diff < nearest_diff:
-            nearest_key = key
-            nearest_diff = diff
-
-    if nearest_key is None or nearest_diff is None:
+    if nearest_key is None:
         return False
 
-    if nearest_diff > ROAD_MATCH_TOLERANCE_SECONDS:
+    if abs(nearest_key - moment) > ROAD_MATCH_TOLERANCE_SECONDS:
         return False
 
     return evidence[nearest_key] >= 1.0
 
 
-def road_evidence(stages, observations):
-    """Собирает кадры с дорогой, отбрасывая ложные срабатывания."""
+def collect_roads(stages, observations):
     segments = []
 
     for item in observations:
@@ -592,14 +812,7 @@ def road_evidence(stages, observations):
 
         if stored:
             for segment in stored:
-                segments.append({
-                    **segment,
-                    "confidence": (
-                        segment.get("confidence")
-                        if segment.get("confidence") is not None
-                        else data.get("confidence")
-                    ),
-                })
+                segments.append(dict(segment))
 
             continue
 
@@ -614,112 +827,32 @@ def road_evidence(stages, observations):
         })
 
     evidence = semantic_road_frames(stages)
+    result = []
 
-    return [
-        segment
-        for segment in segments
-        if road_allowed_by_mask(
-            evidence,
-            numeric_time(segment.get("start")),
+    for segment in segments:
+        start = numeric_time(segment.get("start"))
+
+        if not road_allowed(evidence, start):
+            continue
+
+        segment["start"] = start
+        segment["end"] = (
+            numeric_time(segment.get("end"))
+            if segment.get("end") is not None
+            else start
         )
-    ]
+        result.append(segment)
 
-
-def speech_evidence(observations):
-    """Собирает реплики речи из новых и старых наблюдений."""
-    segments = []
-
-    for item in observations:
-        if item.get("source") != "speech":
-            continue
-
-        stored = records(
-            mapping(item.get("data")).get("segments")
-        )
-
-        if stored:
-            for segment in stored:
-                start = numeric_time(segment.get("start"))
-
-                if start is None:
-                    continue
-
-                end = numeric_time(segment.get("end"))
-
-                segments.append({
-                    "start": start,
-                    "end": end if end is not None else start,
-                    "text": str(segment.get("text", "")).strip(),
-                })
-
-            continue
-
-        start = numeric_time(item.get("start"))
-
-        if start is None:
-            continue
-
-        end = numeric_time(item.get("end"))
-
-        segments.append({
-            "start": start,
-            "end": end if end is not None else start,
-            "text": effective_text(item).strip(),
-        })
-
-    return sorted(segments, key=lambda item: item["start"])
-
-
-def speech_distance(segment, moment):
-    """Расстояние от таймкода до реплики; внутри реплики — ноль."""
-    if moment < segment["start"]:
-        return segment["start"] - moment
-
-    if moment > segment["end"]:
-        return moment - segment["end"]
-
-    return 0.0
-
-
-def closest_speech(segments, moment):
-    """Ближайшие реплики, затем снова по времени."""
-    chosen = sorted(
-        segments,
-        key=lambda item: speech_distance(item, moment),
-    )[:KEY_FRAME_SPEECH_LIMIT]
-
-    return sorted(
-        chosen,
-        key=lambda item: item["start"],
+    result.sort(
+        key=lambda item: item["start"] or 0
     )
 
-
-def ocr_evidence(observations):
-    """Собирает надписи с привязкой к кадру."""
-    items = []
-
-    for item in observations:
-        if item.get("source") != "ocr":
-            continue
-
-        text = effective_text(item).strip()
-
-        if not text:
-            continue
-
-        items.append({
-            "start": numeric_time(item.get("start")),
-            "frame_artifact": item.get("frame_artifact"),
-            "text": text,
-        })
-
-    return items
+    return result
 
 
-def nearest_evidence(segments, moment):
-    """Ближайший фрагмент в пределах допуска или None."""
-    nearest = None
-    nearest_diff = None
+def road_intervals(segments, gap_seconds=8.0):
+    """Склеивает соседние похожие кадры в понятные участки."""
+    intervals = []
 
     for segment in segments:
         start = numeric_time(segment.get("start"))
@@ -727,1076 +860,1454 @@ def nearest_evidence(segments, moment):
         if start is None:
             continue
 
-        diff = abs(start - moment)
+        signature = (
+            segment.get("direction"),
+            segment.get("width_label"),
+        )
 
-        if nearest_diff is None or diff < nearest_diff:
-            nearest = segment
-            nearest_diff = diff
+        if (
+            intervals
+            and intervals[-1]["signature"] == signature
+            and start - intervals[-1]["end"] <= gap_seconds
+        ):
+            interval = intervals[-1]
+            interval["end"] = start
+            interval["count"] += 1
+            interval["confidence"] = max(
+                interval["confidence"] or 0.0,
+                float(segment.get("confidence") or 0),
+            )
+            interval["curve_labels"].add(
+                segment.get("curve_label")
+            )
+            interval["white"] = (
+                interval["white"]
+                or (
+                    mapping(segment.get("markings")).get(
+                        "white",
+                        0,
+                    ) > 1
+                )
+            )
+            interval["yellow"] = (
+                interval["yellow"]
+                or (
+                    mapping(segment.get("markings")).get(
+                        "yellow",
+                        0,
+                    ) > 1
+                )
+            )
 
-    if nearest_diff is None:
-        return None
+            for item in segment.get("surroundings") or []:
+                label = (
+                    item.get("label_ru")
+                    or item.get("label")
+                )
 
-    if nearest_diff > KEY_FRAME_MATCH_TOLERANCE_SECONDS:
-        return None
+                if label:
+                    interval["surroundings"][label] += 1
 
-    return nearest
-
-
-def scene_bounds(stages, moment):
-    """Возвращает номер сцены и её границы для таймкода."""
-    intervals = stage_result(stages, "scenes").get(
-        "intervals"
-    )
-
-    if not isinstance(intervals, list) or not intervals:
-        return None
-
-    index = None
-
-    for position, interval_value in enumerate(intervals):
-        if not isinstance(
-            interval_value,
-            (list, tuple),
-        ) or len(interval_value) < 2:
             continue
 
-        start = numeric_time(interval_value[0])
-        end = numeric_time(interval_value[1])
+        surroundings = Counter()
 
-        if start is None or end is None:
-            continue
+        for item in segment.get("surroundings") or []:
+            label = (
+                item.get("label_ru")
+                or item.get("label")
+            )
 
-        if start <= moment < end:
-            index = position
-            break
+            if label:
+                surroundings[label] += 1
 
-    if index is None:
-        index = len(intervals) - 1
+        intervals.append({
+            "signature": signature,
+            "start": start,
+            "end": numeric_time(segment.get("end")) or start,
+            "count": 1,
+            "direction": segment.get("direction"),
+            "width_label": segment.get("width_label"),
+            "curve_labels": {
+                segment.get("curve_label")
+            } - {None},
+            "white": (
+                mapping(segment.get("markings")).get(
+                    "white",
+                    0,
+                ) > 1
+            ),
+            "yellow": (
+                mapping(segment.get("markings")).get(
+                    "yellow",
+                    0,
+                ) > 1
+            ),
+            "confidence": segment.get("confidence"),
+            "surroundings": surroundings,
+        })
 
-    interval_value = intervals[index]
+    result = []
 
-    return (
-        index + 1,
-        numeric_time(interval_value[0]),
-        numeric_time(interval_value[1]),
-    )
+    for interval in intervals:
+        result.append({
+            "start": interval["start"],
+            "end": interval["end"],
+            "count": interval["count"],
+            "direction": interval["direction"],
+            "width_label": interval["width_label"],
+            "curve_labels": sorted(
+                item
+                for item in interval["curve_labels"]
+                if item
+            ),
+            "markings": [
+                name
+                for name, present in (
+                    ("белая", interval["white"]),
+                    ("жёлтая", interval["yellow"]),
+                )
+                if present
+            ],
+            "confidence": (
+                round(float(interval["confidence"]), 2)
+                if interval["confidence"] is not None
+                else None
+            ),
+            "surroundings": [
+                label
+                for label, _ in (
+                    interval["surroundings"].most_common(6)
+                )
+            ],
+        })
+
+    return result
 
 
-def metric_text(metrics):
-    """Короткая строка числовых метрик визуального профиля."""
+def _road_interval_text(interval):
     parts = []
 
-    if numeric_time(metrics.get("brightness")) is not None:
+    if interval.get("direction"):
+        parts.append(str(interval["direction"]))
+
+    if interval.get("curve_labels"):
+        parts.append(", ".join(interval["curve_labels"]))
+
+    if interval.get("width_label"):
+        parts.append(str(interval["width_label"]))
+
+    if interval.get("markings"):
         parts.append(
-            f"яркость {round(float(metrics['brightness']))}"
+            ", ".join(interval["markings"])
+            + " разметка"
         )
 
-    if numeric_time(metrics.get("contrast")) is not None:
+    if interval.get("surroundings"):
         parts.append(
-            f"контраст {round(float(metrics['contrast']))}"
+            "рядом: "
+            + ", ".join(interval["surroundings"])
         )
 
-    if numeric_time(metrics.get("saturation")) is not None:
-        parts.append(
-            f"насыщенность "
-            f"{round(float(metrics['saturation']))}"
+    return "; ".join(parts)
+
+
+# ============================================================
+# Локации
+# ============================================================
+
+def _object_summary(frames, limit=8):
+    collected = {}
+
+    for frame in frames:
+        seen = set()
+
+        for item in records(frame.get("objects")):
+            label = (
+                item.get("label_ru")
+                or item.get("label")
+            )
+
+            if not label or label in seen:
+                continue
+
+            seen.add(label)
+
+            entry = collected.setdefault(label, {
+                "label": label,
+                "frame_count": 0,
+                "max_area_percent": 0.0,
+            })
+
+            entry["frame_count"] += 1
+            entry["max_area_percent"] = max(
+                entry["max_area_percent"],
+                float(item.get("area_percent") or 0),
+            )
+
+    result = list(collected.values())
+
+    for item in result:
+        item["max_area_percent"] = round(
+            item["max_area_percent"],
+            1,
         )
 
-    return ", ".join(parts)
+    result.sort(
+        key=lambda item: (
+            -item["frame_count"],
+            -item["max_area_percent"],
+        )
+    )
+
+    return result[:limit]
 
 
-def key_frames_section(stages, observations):
-    """
-    Сводный раздел по ключевым кадрам.
+VISUAL_NOISE = {
+    "",
+    "не определено",
+    "не определяется",
+    "не определён",
+    "не определен",
+    "выраженные признаки не найдены",
+    "признаки не найдены",
+    "нет данных",
+}
 
-    Для каждого кадра объединяются объекты, визуальный профиль,
-    дорога, распознанный текст и речь в пределах ±10 секунд.
-    """
-    frames = key_frame_items(stages)
 
-    lines = [
-        "## 17. Ключевые кадры",
-        "",
-        "Один сводный вывод на исследованный кадр: объекты, "
-        "визуальный профиль, геометрия дороги, текст на кадре "
-        "и речь в пределах "
-        f"±{KEY_FRAME_SPEECH_WINDOW_SECONDS} секунд. "
-        "Таймкоды приблизительные.",
-        "",
+def _visual_value(value):
+    """Отбрасывает пустые и служебные значения профиля."""
+    text = str(value or "").strip()
+
+    if not text:
+        return None
+
+    parts = [
+        part.strip()
+        for part in text.split(",")
+        if part.strip()
+        and part.strip().casefold() not in VISUAL_NOISE
     ]
 
-    if not frames:
-        lines.extend([
-            "Ключевые кадры не найдены: визуальные этапы "
-            "не завершены или не сохранили кадры.",
-            "",
-        ])
-        return lines
+    text = ", ".join(parts).strip()
 
-    roads = road_evidence(stages, observations)
-    speech = speech_evidence(observations)
-    ocr = ocr_evidence(observations)
+    if not text or text.casefold() in VISUAL_NOISE:
+        return None
 
-    for number, frame in enumerate(
-        frames[:KEY_FRAME_LIMIT],
-        start=1,
-    ):
-        moment = frame["timestamp"]
-        scene = scene_bounds(stages, moment)
+    return text
 
-        title = f"### Кадр {number} · {timestamp(moment)}"
 
-        if scene:
-            title += (
-                f" · сцена {scene[0]} "
-                f"({timestamp(scene[1])} — "
-                f"{timestamp(scene[2])})"
-            )
+def _visual_summary(frames):
+    lighting = Counter(
+        item.get("descriptors", {}).get("lighting")
+        for item in frames
+        if item.get("descriptors")
+    )
+    weather = Counter(
+        item.get("descriptors", {}).get("weather")
+        for item in frames
+        if item.get("descriptors")
+    )
+    season = Counter(
+        item.get("descriptors", {}).get("season")
+        for item in frames
+        if item.get("descriptors")
+    )
+    landscape = Counter(
+        value
+        for item in frames
+        for value in (
+            item.get("descriptors", {}).get("landscape")
+            or []
+        )
+        if _visual_value(value)
+    )
 
-        lines.extend([title, ""])
+    def top(counter):
+        return _visual_value(
+            counter.most_common(1)[0][0]
+        ) if counter else None
 
-        objects = sorted(
-            frame["objects"],
-            key=lambda item: -float(
-                item.get("area_percent") or 0
-            ),
+    return {
+        "lighting": top(lighting),
+        "weather": top(weather),
+        "season": top(season),
+        "landscape": [
+            _visual_value(value)
+            for value, _ in landscape.most_common(4)
+            if _visual_value(value)
+        ],
+    }
+
+
+def _group_speech(group, speech_mentions):
+    return [
+        item
+        for item in speech_mentions
+        if _in_range(
+            item.get("start"),
+            group["start"],
+            group["end"],
+            pad=0.5,
+        )
+    ][:GROUP_SPEECH_LIMIT]
+
+
+def _group_ocr(group, ocr):
+    result = []
+
+    for item in ocr:
+        if not any(
+            _in_range(moment, group["start"], group["end"])
+            for moment in item["times"]
+        ):
+            continue
+
+        result.append(item)
+
+    result.sort(
+        key=lambda item: (
+            -(item["score"] or 0.0),
+            -item["count"],
+        )
+    )
+
+    return result[:6]
+
+
+def _group_roads(group, roads):
+    result = [
+        item
+        for item in roads
+        if _in_range(
+            item.get("start"),
+            group["start"],
+            group["end"],
+            pad=0.5,
+        )
+    ]
+
+    return road_intervals(result)
+
+
+def location_groups(stages, ocr, roads, speech_mentions):
+    frames = collect_frames(stages)
+    groups = group_frames(
+        frames,
+        scene_intervals(stages),
+    )
+    result = []
+
+    for group in groups:
+        frames_in_group = group["frames"]
+        objects = _object_summary(frames_in_group)
+        visual = _visual_summary(frames_in_group)
+        group_ocr = _group_ocr(group, ocr)
+        group_roads = _group_roads(group, roads)
+        group_speech = _group_speech(
+            group,
+            speech_mentions,
         )
 
-        if objects:
-            lines.append(
-                "- Объекты: "
-                + ", ".join(
-                    f"{item.get('label_ru') or item.get('label')}"
-                    f" ({item.get('area_percent', 0)}%)"
-                    for item in objects[:6]
-                )
-                + "."
-            )
-        else:
-            lines.append("- Объекты: не найдены.")
-
-        descriptors = frame["descriptors"]
-        metrics = frame["metrics"]
-
-        place_parts = [
-            descriptors.get("lighting"),
-            descriptors.get("weather"),
-            descriptors.get("season"),
+        frame_times = [
+            round(frame["timestamp"], 3)
+            for frame in frames_in_group
         ]
 
-        place = "; ".join(
-            str(part)
-            for part in place_parts
-            if part
+        result.append({
+            "number": group["number"],
+            "start": group["start"],
+            "end": group["end"],
+            "scene_numbers": group["scene_numbers"],
+            "frame_count": len(frames_in_group),
+            "frame_times": frame_times[
+                :MAX_GROUP_FRAME_TIMES
+            ],
+            "frame_times_total": len(frame_times),
+            "objects": objects,
+            "visual": visual,
+            "ocr": group_ocr,
+            "roads": group_roads,
+            "speech": group_speech,
+        })
+
+    return result
+
+
+def _group_title(group):
+    if abs(group["end"] - group["start"]) < 0.05:
+        span = timestamp(group["start"])
+    else:
+        span = (
+            f"{timestamp(group['start'])}–"
+            f"{timestamp(group['end'])}"
         )
 
-        landscape = descriptors.get("landscape")
+    title = f"Локация {group['number']} · {span}"
 
-        place_line = f"- Место: {place}." if place else "- Место: не определено."
+    if group["scene_numbers"]:
+        title += " · сцена " + ", ".join(
+            str(value)
+            for value in group["scene_numbers"]
+        )
 
-        if isinstance(landscape, list) and landscape:
-            place_line += (
-                " Ландшафт: "
-                + ", ".join(str(item) for item in landscape)
-                + "."
-            )
+    title += f" · {group['frame_count']} кадр."
 
-        lines.append(place_line)
-
-        numbers = metric_text(metrics)
-
-        if numbers:
-            lines.append(f"- Метрики кадра: {numbers}.")
-
-        road = nearest_evidence(roads, moment)
-
-        if road:
-            road_text = re.sub(
-                r"^Дорога:\s*",
-                "",
-                str(road.get("text", "")).strip(),
-                flags=re.IGNORECASE,
-            )
-
-            extra = []
-
-            if road.get("semantic_road_percent") is not None:
-                extra.append(
-                    "маска дороги "
-                    f"{road['semantic_road_percent']}%"
-                )
-
-            if road.get("confidence") is not None:
-                extra.append(
-                    "уверенность "
-                    f"{round(float(road['confidence']) * 100)}%"
-                )
-
-            suffix = (
-                f" ({', '.join(extra)})"
-                if extra
-                else ""
-            )
-
-            lines.append(
-                f"- Дорога: {road_text}{suffix}."
-            )
-        else:
-            lines.append("- Дорога: признаков не найдено.")
-
-        frame_texts = []
-
-        for item in ocr:
-            start = item["start"]
-
-            matches = (
-                item["frame_artifact"]
-                and item["frame_artifact"]
-                == frame["artifact"]
-            )
-
-            if not matches and start is not None:
-                matches = (
-                    abs(start - moment)
-                    <= KEY_FRAME_MATCH_TOLERANCE_SECONDS
-                )
-
-            if matches and item["text"] not in frame_texts:
-                frame_texts.append(item["text"])
-
-        if frame_texts:
-            lines.append(
-                "- Текст на кадре: "
-                + "; ".join(
-                    f"«{text}»"
-                    for text in frame_texts[:3]
-                )
-                + "."
-            )
-
-        nearby = [
-            item
-            for item in speech
-            if (
-                item["end"] >= (
-                    moment - KEY_FRAME_SPEECH_WINDOW_SECONDS
-                )
-                and item["start"] <= (
-                    moment + KEY_FRAME_SPEECH_WINDOW_SECONDS
-                )
-            )
-        ]
-
-        if nearby:
-            shown = closest_speech(nearby, moment)
-
-            lines.append("- Речь рядом:")
-
-            for item in shown:
-                lines.append(
-                    f"  - `{timestamp(item['start'])}` — "
-                    f"{item['text']}"
-                )
-
-            if len(nearby) > len(shown):
-                lines.append(
-                    f"  - Показаны {len(shown)} ближайших "
-                    f"из {len(nearby)} реплик."
-                )
-        else:
-            lines.append(
-                "- Речь рядом: реплик в окрестности нет."
-            )
-
-        lines.append("")
-
-    if len(frames) > KEY_FRAME_LIMIT:
-        lines.extend([
-            f"Показаны первые {KEY_FRAME_LIMIT} из "
-            f"{len(frames)} ключевых кадров.",
-            "",
-        ])
-
-    return lines
+    return title
 
 
-def location_dossier_section(stages):
-    """Локационное досье: координаты, страны, места, запросы."""
-    result = stage_result(stages, "location_evidence")
-    dossier = mapping(result.get("dossier"))
+# ============================================================
+# Сводки
+# ============================================================
 
-    lines = [
-        "## 4. Локационное досье",
-        "",
-        "Досье объединяет независимые признаки места и "
-        "ранжирует страны и места-кандидаты. Это гипотезы "
-        "для проверки, а не подтверждённый адрес. Каждый "
-        "вывод можно проследить до исходного наблюдения.",
-        "",
+def speech_mentions(evidence):
+    return [
+        item
+        for item in evidence
+        if item.get("origin") == "speech"
+        and item.get("kind") in DIRECT_EVIDENCE_KINDS
     ]
 
-    if not dossier:
-        lines.extend([
-            "Досье не сформировано: этап «Географические "
-            "улики» не завершён или не нашёл признаков.",
-            "",
-        ])
-        return lines
 
-    lines.extend([
-        "Краткий итог:",
-        block(dossier.get("summary", "")),
-        "",
-    ])
+def strongest_objects(stages):
+    result = stage_result(stages, "scene_objects")
+    objects = records(result.get("unique_objects"))
 
-    coordinates = records(dossier.get("coordinates"))
-
-    if coordinates:
-        lines.extend(["GPS-координаты:", ""])
-
-        for item in coordinates:
-            lines.append(
-                f"- {item.get('latitude')}, "
-                f"{item.get('longitude')} "
-                f"(источник: {item.get('origin') or 'не указан'})"
-            )
-
-        lines.append("")
-    else:
-        lines.extend([
-            "GPS-координаты не найдены. Для видео без геотегов "
-            "это ожидаемо, поэтому важны остальные признаки.",
-            "",
-        ])
-
-    countries = records(dossier.get("country_candidates"))
-
-    lines.extend(["Страны-кандидаты:", ""])
-
-    if countries:
-        for item in countries:
-            signals = item.get("signals") or []
-
-            lines.append(
-                f"- {item.get('name') or item.get('code')} — "
-                f"относительная оценка {item.get('score')}"
-            )
-
-            for signal in signals[:6]:
-                lines.append(f"  - {signal}")
-    else:
-        lines.append(
-            "- Недостаточно признаков для ранжирования стран."
+    if not objects:
+        objects = unique_objects_from_frames(
+            records(result.get("frames"))
         )
 
-    lines.append("")
-
-    places = records(dossier.get("place_candidates"))
-
-    lines.extend(["Места и объекты-кандидаты:", ""])
-
-    if places:
-        for item in places:
-            lines.append(
-                f"- {item.get('text')} "
-                f"(упоминаний: {item.get('count', 0)}, "
-                f"оценка: {item.get('confidence')})"
-            )
-    else:
-        lines.append(
-            "- Точные места не выделены. Ищите по признакам "
-            "ниже: язык, бренды, дорожная геометрия, ландшафт."
-        )
-
-    lines.append("")
-
-    queries = dossier.get("search_queries")
-
-    if isinstance(queries, list) and queries:
-        lines.extend([
-            "Поисковые запросы для проверки на карте и в "
-            "поиске:",
-            "",
-        ])
-
-        for query in queries:
-            lines.append(f"- {query}")
-
-        lines.append("")
-
-    profile = mapping(dossier.get("profile"))
-
-    if profile:
-        lines.extend([
-            "Сводный профиль признаков:",
-            json_block(profile),
-            "",
-        ])
-
-    counts = mapping(dossier.get("evidence_counts"))
-
-    if counts:
-        lines.extend([
-            "Количество признаков по типам:",
-            json_block(counts),
-            "",
-        ])
-
-    limitations = dossier.get("limitations")
-
-    if limitations:
-        lines.extend([
-            "Ограничения досье:",
-            block(limitations),
-            "",
-        ])
-
-    return lines
-
-
-def metadata_section(stages):
-    """Метаданные контейнера и GPS — сильнейшие признаки места."""
-    result = stage_result(stages, "metadata")
-    tags = mapping(result.get("tags"))
-    gps = records(result.get("gps"))
-    stage = mapping(stages.get("metadata"))
-
-    lines = [
-        "## 5. Метаданные и GPS",
-        "",
-        "Теги контейнера не проверены на подлинность. "
-        "GPS-тег может быть унаследован от другого файла "
-        "или изменён, но остаётся самым точным признаком.",
-        "",
+    interesting = [
+        item
+        for item in objects
+        if item.get("label") not in GENERIC_OBJECTS
     ]
 
-    if not result:
-        lines.extend([
-            "Этап метаданных не выполнялся в этом задании.",
-            "",
-        ])
-        return lines
+    if not interesting:
+        interesting = objects
 
-    if stage.get("status") not in (None, "completed"):
-        lines.extend([
-            "Этап метаданных не завершён успешно:",
-            block(stage.get("error") or stage.get("note") or ""),
-            "",
-        ])
+    return interesting[:8]
 
-    lines.extend([
-        "Устройство:",
-        block(result.get("device") or "не определено"),
-        "",
-        "Дата создания:",
-        block(result.get("created_at") or "не определена"),
-        "",
-    ])
+
+def search_queries(stages, evidence, ocr):
+    dossier = stage_result(
+        stages,
+        "location_evidence",
+    ).get("dossier") or {}
+
+    queries = []
+
+    for value in dossier.get("search_queries") or []:
+        value = " ".join(str(value).split()).strip()
+
+        if value and value not in queries:
+            queries.append(value[:160])
+
+    places = [
+        item["value"]
+        for item in evidence
+        if item["kind"] in ("address", "place_mention")
+    ]
+
+    for item in ocr:
+        if (item["score"] or 0) < 0.45:
+            continue
+
+        text = item["text"]
+
+        if len(text) < 4:
+            continue
+
+        query = (
+            f"{text}, {places[0]}"
+            if places
+            else text
+        )
+
+        if query not in queries:
+            queries.append(query[:160])
+
+        if len(queries) >= 12:
+            break
+
+    return queries[:12]
+
+
+def summary_lines(
+    passport,
+    gps,
+    evidence,
+    ocr,
+    intervals,
+    objects,
+    countries,
+    places,
+):
+    lines = []
 
     if gps:
-        lines.extend(["GPS из файла:", ""])
+        lines.append(
+            "- **GPS в файле:** "
+            + "; ".join(
+                f"{item['latitude']:.6f}, "
+                f"{item['longitude']:.6f} "
+                f"({item['origin']})"
+                for item in gps[:3]
+            )
+            + "."
+        )
 
-        for item in gps:
+    if countries:
+        lines.append(
+            "- **Вероятные страны:** "
+            + ", ".join(
+                f"{item.get('name') or item.get('code')} "
+                f"({round(float(item.get('score') or 0) * 100)}%)"
+                for item in countries[:3]
+            )
+            + "."
+        )
+
+    place_values = []
+
+    for item in evidence:
+        if item["kind"] not in ("place_mention", "address"):
+            continue
+
+        value = item["value"]
+
+        if value not in place_values:
+            place_values.append(value)
+
+    # Если разбор речи не дал коротких названий, берём
+    # кандидатов из досье и чистим их той же функцией.
+    for item in places:
+        cleaned = clean_place(item.get("text"))
+
+        if cleaned and cleaned not in place_values:
+            place_values.append(cleaned)
+
+    if place_values:
+        lines.append(
+            "- **Места-кандидаты:** "
+            + ", ".join(place_values[:5])
+            + "."
+        )
+
+    direct = [
+        item
+        for item in evidence
+        if item["kind"] in DIRECT_EVIDENCE_KINDS
+        and item["kind"] not in (
+            "place_mention",
+            "address",
+        )
+    ]
+
+    if direct:
+        lines.append(
+            "- **Прямые текстовые улики:** "
+            + "; ".join(
+                f"{item['value']} "
+                f"({KIND_NAMES.get(item['kind'], item['kind'])})"
+                for item in direct[:6]
+            )
+            + "."
+        )
+
+    strong_ocr = [
+        item
+        for item in ocr
+        if (item["score"] or 0) >= 0.45
+        and len(item["text"]) >= 4
+    ]
+
+    if strong_ocr:
+        lines.append(
+            "- **Надписи на кадрах:** "
+            + "; ".join(
+                f"«{item['text']}»"
+                for item in strong_ocr[:6]
+            )
+            + "."
+        )
+
+    if objects:
+        lines.append(
+            "- **Характерные объекты:** "
+            + ", ".join(
+                str(item.get("label_ru") or item.get("label"))
+                for item in objects[:6]
+            )
+            + "."
+        )
+
+    road_summary = _road_summary(intervals)
+
+    if road_summary:
+        lines.append("- **Дорога:** " + road_summary)
+
+    if not lines:
+        lines.append(
+            "- Прямых улик не найдено. Используйте "
+            "визуальные признаки, текст и речь ниже."
+        )
+
+    if passport.get("device"):
+        lines.append(
+            f"- **Устройство:** {passport['device']}."
+        )
+
+    return lines
+
+
+def _road_summary(stages_of):
+    """Короткая строка по интервалам дороги."""
+    intervals = stages_of or []
+
+    if not intervals:
+        return None
+
+    directions = Counter(
+        item["direction"]
+        for item in intervals
+        if item.get("direction")
+    )
+    parts = []
+
+    if directions:
+        direction, count = directions.most_common(1)[0]
+        parts.append(f"{direction} ({count} уч.)")
+
+    curves = Counter(
+        value
+        for item in intervals
+        for value in item.get("curve_labels") or []
+    )
+
+    if curves:
+        parts.append(
+            "изгибы: "
+            + ", ".join(
+                value for value, _ in curves.most_common(3)
+            )
+        )
+
+    surroundings = Counter(
+        value
+        for item in intervals
+        for value in item.get("surroundings") or []
+    )
+
+    if surroundings:
+        parts.append(
+            "рядом: "
+            + ", ".join(
+                value
+                for value, _ in surroundings.most_common(5)
+            )
+        )
+
+    return "; ".join(parts) + "." if parts else None
+
+
+# ============================================================
+# Разделы отчёта
+# ============================================================
+
+def _passport_section(passport):
+    rows = [
+        ("Файл", passport.get("name")),
+        ("Длительность", passport.get("duration")),
+        ("Разрешение", passport.get("resolution")),
+        ("Частота кадров", passport.get("fps")),
+        ("Есть звук", "да" if passport.get("has_audio") else "нет"),
+        ("Устройство", passport.get("device")),
+        ("Дата файла", passport.get("file_created_at")),
+        ("SHA-256", passport.get("sha256")),
+        ("Задание", passport.get("job_id")),
+    ]
+
+    lines = [
+        "## 2. Паспорт видео",
+        "",
+        "| Параметр | Значение |",
+        "| --- | --- |",
+    ]
+
+    for label, value in rows:
+        if value in (None, ""):
+            continue
+
+        lines.append(
+            f"| {label} | {_table_cell(value)} |"
+        )
+
+    lines.append("")
+
+    return lines
+
+
+def _evidence_section(evidence):
+    lines = [
+        "## 3. Улики",
+        "",
+        "Прямые улики — то, что можно сразу искать на карте. "
+        "Косвенные сужают регион и подтверждают гипотезу.",
+        "",
+    ]
+
+    direct = [
+        item
+        for item in evidence
+        if item["kind"] in DIRECT_EVIDENCE_KINDS
+    ]
+    indirect = [
+        item
+        for item in evidence
+        if item["kind"] not in DIRECT_EVIDENCE_KINDS
+    ]
+
+    lines.extend(["### Прямые", ""])
+
+    if direct:
+        lines.extend([
+            "| Тип | Значение | Время | Уверенность |",
+            "| --- | --- | --- | --- |",
+        ])
+
+        for item in direct:
+            confidence = item.get("confidence")
+
             lines.append(
-                f"- {item.get('latitude')}, {item.get('longitude')}"
+                f"| {_table_cell(item['label'])} "
+                f"| {_table_cell(item['value'])} "
+                f"| {timestamp(item.get('start'))} "
+                f"| {round(confidence * 100) if confidence is not None else '—'}% |"
             )
 
         lines.append("")
+
     else:
         lines.extend([
-            "GPS в метаданных не найден.",
+            "Прямых текстовых улик не найдено.",
             "",
         ])
 
-    if tags:
+    lines.extend(["### Косвенные", ""])
+
+    if indirect:
         lines.extend([
-            "Найденные теги:",
-            json_block(tags),
-            "",
+            "| Тип | Значение | Время | Уверенность |",
+            "| --- | --- | --- | --- |",
         ])
+
+        for item in indirect:
+            confidence = item.get("confidence")
+
+            lines.append(
+                f"| {_table_cell(item['label'])} "
+                f"| {_table_cell(item['value'])} "
+                f"| {timestamp(item.get('start'))} "
+                f"| {round(confidence * 100) if confidence is not None else '—'}% |"
+            )
+
+        lines.append("")
+
     else:
         lines.extend([
-            "Полезные теги не найдены. Установка ExifTool "
-            "расширяет чтение метаданных, но не обязательна.",
+            "Косвенных признаков в досье нет.",
             "",
         ])
 
     return lines
 
 
-# ============================================================
-# Генерация отчёта
-# ============================================================
-
-def render_report(job):
-    stages = mapping(job.get("stages"))
-    options = mapping(job.get("options"))
-
-    observations = collect_observations(job)
-
-    source_counts = Counter(
-        str(item.get("source", "unknown"))
-        for item in observations
-    )
-
-    review_counts = Counter(
-        item.get("review", "unreviewed")
-        for item in observations
-    )
-
-    prepare = mapping(stages.get("prepare"))
-    prepared = mapping(prepare.get("result"))
-
+def _groups_section(groups):
     lines = [
-        "# Отчёт о признаках места съёмки и извлечённой информации",
+        "## 4. Локации и ключевые кадры",
         "",
-        "> Отчёт объединяет результаты анализаторов, включая "
-        "GPS, метаданные и визуальные признаки. Географические "
-        "гипотезы требуют ручной проверки и не являются "
-        "подтверждённым адресом.",
-        "",
-        "## 1. Сведения о задании",
-        "",
-        json_block({
-            "job_id": job.get("id"),
-            "filename": job.get("name"),
-            "status": job.get("status"),
-            "created_at": job.get("created_at"),
-            "updated_at": job.get("updated_at"),
-            "report_generated_at": datetime.now(
-                timezone.utc
-            ).isoformat(),
-            "duration_seconds": prepared.get("duration"),
-            "has_audio": prepared.get("has_audio"),
-            "source_sha256": prepared.get("sha256"),
-            "preview_artifact": prepared.get("preview"),
-        }),
-        "",
-        "## 2. Параметры анализа",
-        "",
-        json_block(dict(options)),
-        "",
-        "## 3. Сводка",
-        "",
-        f"- Всего сохранённых наблюдений: {len(observations)}.",
-        f"- Подтверждено пользователем: "
-        f"{review_counts['accepted']}.",
-        f"- Отклонено пользователем: "
-        f"{review_counts['rejected']}.",
-        f"- Не проверено: "
-        f"{review_counts['unreviewed']}.",
-        "",
-        "Количество наблюдений по источникам:",
-        json_block(dict(source_counts)),
-        "",
-        "Количество наблюдений не равно количеству "
-        "уникальных объектов или независимых свидетельств.",
+        "Кадры сгруппированы по сценам и непрерывным участкам. "
+        "Внутри локации показаны самые полезные признаки, "
+        "а не повторение одного и того же кадра.",
         "",
     ]
 
-    lines.extend(location_dossier_section(stages))
-    lines.extend(metadata_section(stages))
-
-    lines.extend([
-        "## 6. Состояние анализаторов",
-        "",
-    ])
-
-    # ---------- Состояние этапов ----------
-
-    for stage_name, raw_stage in stages.items():
-        stage = mapping(raw_stage)
-        result = mapping(stage.get("result"))
-
-        status = stage.get("status", "unknown")
-        history = stage.get("history")
-
-        if isinstance(history, list):
-            history_count = len(history)
-        else:
-            history_count = stage.get("history_count")
-
+    if not groups:
         lines.extend([
-            f"### {STAGE_NAMES.get(stage_name, 'Другой этап')}",
+            "Кадры не сохранились: визуальные этапы "
+            "не завершены.",
             "",
-            json_block({
-                "stage_key": stage_name,
-                "status": STATUS_NAMES.get(status, status),
-                "observation_count": len(
-                    records(stage.get("observations"))
-                ),
-                "run_id": stage.get("run_id"),
-                "result_run_id": stage.get("result_run_id"),
-                "previous_result_is_displayed": (
-                    is_previous_result(stage)
-                ),
-                "history_count": history_count,
-                "note": stage.get("note"),
-                "result_note": result.get("note"),
-                "error": stage.get("error"),
-                "partial_errors": result.get("errors", []),
-            }),
+        ])
+        return lines
+
+    for group in groups:
+        lines.extend([
+            f"### {_group_title(group)}",
             "",
         ])
 
-        # Сохраняем полезные поля уровня этапа:
-        # язык, список кадров, интервалы сцен и т. п.
-        # Тяжёлые блоки, повторяющие отдельные разделы,
-        # не дублируем.
-        excluded = {
-            "observations",
-            "errors",
-            "note",
-        }
+        if group["objects"]:
+            lines.append(
+                "- **Видно:** "
+                + ", ".join(
+                    f"{item['label']} "
+                    f"({item['frame_count']} кадр., "
+                    f"до {item['max_area_percent']}%)"
+                    for item in group["objects"]
+                )
+                + "."
+            )
+        else:
+            lines.append("- **Видно:** объекты не распознаны.")
 
-        if stage_name == "location_evidence":
-            excluded.update({"dossier", "artifact"})
+        visual = group["visual"]
+        visual_parts = _short_list([
+            visual.get("lighting"),
+            visual.get("weather"),
+            visual.get("season"),
+        ], 3)
 
-        if stage_name == "metadata":
-            excluded.update({"tags", "gps"})
+        if visual.get("landscape"):
+            visual_parts.append(
+                "ландшафт: " + ", ".join(visual["landscape"])
+            )
 
-        if stage_name == "audio_structure":
-            excluded.add("windows")
+        if visual_parts:
+            lines.append(
+                "- **Место:** " + "; ".join(visual_parts) + "."
+            )
 
-        if stage_name == "speech":
-            excluded.add("segments")
+        if group["roads"]:
+            for interval in group["roads"][:3]:
+                lines.append(
+                    "- **Дорога:** "
+                    f"{_road_interval_text(interval)} "
+                    f"({interval['count']} кадр.)."
+                )
+        else:
+            lines.append("- **Дорога:** признаков не найдено.")
 
-        if stage_name in (
-            "ocr",
-            "scene_objects",
-            "visual_profile",
-        ):
-            excluded.add("frames")
+        if group["ocr"]:
+            lines.append(
+                "- **Текст:** "
+                + "; ".join(
+                    f"«{item['text']}»"
+                    for item in group["ocr"][:4]
+                )
+                + "."
+            )
 
-        if stage_name == "scene_objects":
-            excluded.add("unique_objects")
+        if group["speech"]:
+            lines.append("- **Речь рядом:**")
 
-        stage_details = {
-            key: value
-            for key, value in result.items()
-            if key not in excluded
-        }
+            for item in group["speech"]:
+                lines.append(
+                    f"  - `{timestamp(item['start'])}` — "
+                    f"{item['value']}"
+                )
 
-        if stage_details:
-            lines.extend([
-                "Дополнительные результаты этапа:",
-                json_block(stage_details),
-                "",
-            ])
+        if group["frame_times"]:
+            lines.append(
+                "- **Кадры:** "
+                + ", ".join(
+                    f"`{timestamp(moment)}`"
+                    for moment in group["frame_times"]
+                )
+                + (
+                    f" и ещё {group['frame_times_total'] - len(group['frame_times'])}."
+                    if group["frame_times_total"] > len(group["frame_times"])
+                    else "."
+                )
+            )
 
-    # Явно отмечаем новые этапы, которых нет в старом задании.
-    for stage_name in (
-        "metadata",
-        "audio_structure",
-        "visual_profile",
-        "scene_objects",
+        lines.append("")
+
+    return lines
+
+
+def _road_section(stages, roads, intervals):
+    summary = stage_result(
+        stages,
         "road_geometry",
-        "location_evidence",
-        "visual",
-        "audio_events",
-        "structure",
-    ):
-        if stage_name not in stages:
-            lines.extend([
-                f"### {STAGE_NAMES[stage_name]}",
-                "",
-                "Этап отсутствует в структуре этого задания. "
-                "Это не означает, что соответствующих "
-                "признаков нет в видео.",
-                "",
-            ])
-
-    # ---------- Техническая информация ----------
-
-    append_section(
-        lines,
-        "7. Технические сведения",
-        select_items(observations, {"technical"}),
-    )
-
-    # ---------- Сцены ----------
-
-    append_section(
-        lines,
-        "8. Сцены",
-        select_items(observations, {"scene"}),
-    )
-
-    # ---------- Чистовая транскрипция ----------
-
-    lines.extend([
-        "## 9. Транскрипция для чтения",
+    ).get("summary") or {}
+    lines = [
+        "## 5. Геометрия дороги и придорожные объекты",
         "",
-        "Используется исправленный текст, если он сохранён. "
-        "Отклонённые записи исключены только из этой версии "
-        "транскрипции и сохранены в следующем разделе.",
+    ]
+
+    if not roads:
+        lines.extend([
+            "Дорога не подтверждена семантической маской "
+            "или геометрия недостаточно надёжна. Это тоже "
+            "признак: вероятны сцены без дороги.",
+            "",
+        ])
+        return lines
+
+    sampled = summary.get("sampled_frames")
+    detected = summary.get("detected_frames")
+    confidence = summary.get("confidence")
+
+    lines.append(
+        f"- Подтверждено кадров: {detected or len(roads)}"
+        + (f" из {sampled}" if sampled else "")
+        + (
+            f"; уверенность {round(float(confidence) * 100)}%."
+            if confidence is not None
+            else "."
+        )
+    )
+
+    sequence = mapping(summary.get("sequence"))
+
+    if sequence.get("text"):
+        lines.append(f"- {sequence['text']}")
+
+    surroundings = records(summary.get("surroundings"))
+
+    if surroundings:
+        lines.append(
+            "- **Придорожные объекты:** "
+            + ", ".join(
+                f"{item.get('label')} "
+                f"({item.get('frame_count')} кадр.)"
+                for item in surroundings[:8]
+            )
+            + "."
+        )
+
+    lines.append("")
+    lines.extend([
+        "Участки:",
         "",
     ])
 
-    speech = select_items(observations, {"speech"})
+    for interval in intervals:
+        lines.append(
+            f"- `{timestamp(interval['start'])}`–"
+            f"`{timestamp(interval['end'])}` — "
+            f"{_road_interval_text(interval)} "
+            f"({interval['count']} кадр.)."
+        )
 
-    readable_speech = [
-        item
-        for item in speech
-        if item.get("review") != "rejected"
+    lines.append("")
+
+    return lines
+
+
+def _ocr_section(ocr):
+    lines = [
+        "## 6. Текст на кадрах",
+        "",
+        "Уникальные надписи после нормализации. "
+        "Низкоуверенные и пустые распознавания отброшены.",
+        "",
     ]
 
-    if not readable_speech:
+    if not ocr:
+        lines.extend([
+            "Надписей не найдено.",
+            "",
+        ])
+        return lines
+
+    lines.extend([
+        "| Время | Текст | Повторов | Уверенность |",
+        "| --- | --- | --- | --- |",
+    ])
+
+    for item in ocr[:MAX_OCR_GROUPS]:
+        score = item["score"]
+
+        lines.append(
+            f"| {timestamp(item['first_time'])} "
+            f"| {_table_cell(item['text'])} "
+            f"| {item['count']} "
+            f"| {round(score * 100) if score is not None else '—'}% |"
+        )
+
+    lines.append("")
+
+    if len(ocr) > MAX_OCR_GROUPS:
+        lines.extend([
+            f"Показаны первые {MAX_OCR_GROUPS} "
+            f"из {len(ocr)} уникальных надписей.",
+            "",
+        ])
+
+    return lines
+
+
+def _speech_section(mentions, speech):
+    lines = [
+        "## 7. Речь",
+        "",
+    ]
+
+    if mentions:
+        lines.extend([
+            "### Упоминания места, адреса и бренды",
+            "",
+        ])
+
+        for item in mentions[:40]:
+            lines.append(
+                f"- `{timestamp(item['start'])}` — "
+                f"{KIND_NAMES.get(item['kind'], item['kind'])}: "
+                f"{item['value']}"
+            )
+
+        lines.append("")
+
+    else:
+        lines.extend([
+            "Упоминаний места, адресов и брендов в речи нет.",
+            "",
+        ])
+
+    lines.extend([
+        "### Транскрипция",
+        "",
+    ])
+
+    if not speech:
         lines.extend([
             "Доступной транскрипции нет.",
             "",
         ])
+        return lines
 
-    for item in readable_speech:
+    for item in speech[:1000]:
+        lines.append(
+            f"- `{timestamp(item['start'])}` — "
+            f"{item['text']}"
+        )
+
+    if len(speech) > 1000:
         lines.extend([
-            f"### {interval(item)}",
             "",
+            f"Показаны первые 1000 из {len(speech)} реплик.",
         ])
 
-        segments = records(
-            mapping(item.get("data")).get("segments")
+    lines.append("")
+
+    return lines
+
+
+def _visual_section(stages, objects):
+    profile = mapping(
+        stage_result(stages, "visual_profile").get(
+            "profile"
         )
-        corrected = item.get("corrected_text")
+    )
 
-        if corrected is not None and corrected != item.get("text"):
-            lines.append(block(corrected))
+    lines = [
+        "## 8. Визуальный профиль и объекты",
+        "",
+    ]
 
-        elif segments:
-            for segment in segments[:500]:
-                text = str(
-                    segment.get("text", "")
-                ).strip()
+    if profile:
+        lines.append(
+            "- **Профиль:** "
+            + "; ".join(
+                _short_list([
+                    f"освещённость: {profile.get('lighting')}",
+                    f"погода: {profile.get('weather')}",
+                    f"сезон: {profile.get('season')}",
+                    f"сложность: {profile.get('complexity')}",
+                ], 4)
+            )
+            + "."
+        )
 
-                if not text:
-                    continue
+        if profile.get("landscape"):
+            lines.append(
+                "- **Ландшафт:** "
+                + ", ".join(profile["landscape"])
+                + "."
+            )
 
-                lines.append(
-                    f"- `{timestamp(segment.get('start'))}`"
-                    f" — {text}"
-                )
+        sampled = profile.get("sampled_frames")
 
-            if len(segments) > 500:
-                lines.append(
-                    f"Показаны первые 500 из "
-                    f"{len(segments)} реплик."
-                )
-
-        else:
-            lines.append(block(effective_text(item)))
+        if sampled:
+            lines.append(
+                f"- **Проанализировано кадров:** {sampled}."
+            )
 
         lines.append("")
 
-        if mapping(
-            item.get("_provenance")
-        ).get("previous_result"):
-            lines.extend([
-                "Примечание: результат предыдущей "
-                "попытки этапа.",
-                "",
-            ])
+    if not objects:
+        lines.extend([
+            "Уникальные объекты не найдены.",
+            "",
+        ])
+        return lines
 
-    append_section(
-        lines,
-        "10. Речь — оригиналы и проверка",
-        speech,
-    )
+    lines.extend(["### Уникальные объекты", ""])
 
-    # ---------- OCR: сводка повторов ----------
+    for category in CATEGORY_ORDER:
+        items = [
+            item
+            for item in objects
+            if item.get("category") == category
+        ]
 
-    lines.extend([
-        "## 11. Надписи — сводка повторений",
-        "",
-        "Группировка выполняется по совпадению текста "
-        "после нормализации регистра и пробелов. "
-        "Она не устанавливает идентичность объектов. "
-        "Отклонённые записи исключены из группировки, "
-        "но сохранены в подробном разделе.",
-        "",
-    ])
-
-    ocr = select_items(observations, {"ocr"})
-    groups = {}
-
-    for item in ocr:
-        if item.get("review") == "rejected":
+        if not items:
             continue
 
-        text = effective_text(item)
+        lines.append(
+            f"**{CATEGORY_LABELS_RU.get(category, category)}:** "
+            + ", ".join(
+                f"{item.get('label_ru') or item.get('label')} "
+                f"({item.get('frame_count', 0)} кадр.)"
+                for item in items[:12]
+            )
+            + "."
+        )
 
-        if not text.strip():
+    lines.append("")
+
+    return lines
+
+
+def _queries_section(queries):
+    lines = [
+        "## 9. Что проверить на карте",
+        "",
+    ]
+
+    if not queries:
+        lines.extend([
+            "Готовых запросов нет: не хватает текстовых улик.",
+            "",
+        ])
+        return lines
+
+    for query in queries:
+        lines.append(f"- {query}")
+
+    lines.append("")
+
+    return lines
+
+
+def _limitations_section():
+    return [
+        "## 10. Ограничения",
+        "",
+        "- Отчёт содержит улики и гипотезы, а не "
+        "подтверждённый адрес.",
+        "- GPS-тег может быть неточным или унаследованным.",
+        "- Упоминание места в речи или надписи не "
+        "доказывает место съёмки.",
+        "- Геометрия дороги и визуальный профиль — "
+        "предварительные оценки по кадрам.",
+        "- Направления «влево/вправо» относятся к кадру, "
+        "а не к сторонам света.",
+        "- Похожие кадры не доказывают непрерывность "
+        "маршрута.",
+        "- Таймкоды и границы локаций приблизительные.",
+        "",
+    ]
+
+
+def place_payload(evidence, places):
+    """Короткие названия мест без длинных фраз и повторов."""
+    result = []
+    seen = set()
+
+    for item in evidence:
+        if item["kind"] not in ("place_mention", "address"):
+            continue
+
+        key = normalized_text(item["value"])
+
+        if key in seen:
+            continue
+
+        seen.add(key)
+        result.append({
+            "text": item["value"],
+            "count": item.get("count"),
+            "confidence": item.get("confidence"),
+            "kind": item["kind"],
+        })
+
+    for item in places:
+        text = clean_place(item.get("text"))
+
+        if not text:
             continue
 
         key = normalized_text(text)
-        groups.setdefault(key, []).append(item)
 
-    if not groups:
-        lines.extend([
-            "Нет надписей для группировки.",
-            "",
-        ])
+        if key in seen:
+            continue
 
-    for number, items in enumerate(
-        groups.values(),
-        start=1,
-    ):
-        lines.extend([
-            f"### Надпись {number}",
-            "",
-            block(effective_text(items[0])),
-            "",
-            f"Количество появлений в выборке: {len(items)}.",
-            "",
-            "Связанные наблюдения:",
-            json_block([
-                {
-                    "observation_id": item.get("id"),
-                    "time": timestamp(item.get("start")),
-                    "original_text": item.get("text"),
-                    "corrected_text": item.get(
-                        "corrected_text"
-                    ),
-                    "recognition_score": item.get(
-                        "recognition_score"
-                    ),
-                    "frame_artifact": item.get(
-                        "frame_artifact"
-                    ),
-                    "crop_artifact": item.get("artifact"),
-                    "previous_result": mapping(
-                        item.get("_provenance")
-                    ).get("previous_result"),
-                }
-                for item in items
-            ]),
-            "",
-        ])
+        seen.add(key)
+        result.append({
+            "text": text,
+            "count": item.get("count"),
+            "confidence": item.get("confidence"),
+            "kind": "place_mention",
+        })
 
-    append_section(
-        lines,
-        "12. Надписи — оригиналы и проверка",
-        ocr,
-    )
+    return result
 
-    # ---------- Визуальная сводка ----------
 
-    visual = select_items(observations, {"visual"})
+def _machine_summary(
+    passport,
+    gps,
+    evidence,
+    ocr,
+    speech_mentions_list,
+    roads,
+    intervals,
+    groups,
+    countries,
+    places,
+    objects,
+    queries,
+    stages,
+):
+    road_summary = stage_result(
+        stages,
+        "road_geometry",
+    ).get("summary") or {}
 
-    object_items = [
-        item
-        for item in visual
-        if mapping(item.get("data")).get("kind")
-        == "object"
+    return {
+        "schema": "video-location-evidence/v1",
+        "video": passport,
+        "coordinates": gps,
+        "countries": [
+            {
+                "name": item.get("name"),
+                "code": item.get("code"),
+                "score": item.get("score"),
+                "signals": (item.get("signals") or [])[:6],
+            }
+            for item in countries
+        ],
+        "places": place_payload(evidence, places),
+        "evidence": [
+            {
+                "kind": item["kind"],
+                "value": item["value"],
+                "origin": item.get("origin"),
+                "time_seconds": item.get("start"),
+                "confidence": item.get("confidence"),
+                "occurrences": item.get("count"),
+            }
+            for item in evidence[:60]
+        ],
+        "ocr": [
+            {
+                "text": item["text"],
+                "first_time_seconds": item["first_time"],
+                "occurrences": item["count"],
+                "confidence": item["score"],
+            }
+            for item in ocr[:80]
+        ],
+        "speech_mentions": [
+            {
+                "kind": item["kind"],
+                "value": item["value"],
+                "time_seconds": item.get("start"),
+            }
+            for item in speech_mentions_list[:40]
+        ],
+        "road": {
+            "summary": road_summary,
+            "intervals": intervals[:40],
+        },
+        "location_groups": [
+            {
+                "number": group["number"],
+                "start_seconds": group["start"],
+                "end_seconds": group["end"],
+                "scene_numbers": group["scene_numbers"],
+                "frame_count": group["frame_count"],
+                "frame_times": group["frame_times"],
+                "objects": group["objects"],
+                "visual": group["visual"],
+                "road": group["roads"][:4],
+                "ocr": [
+                    item["text"]
+                    for item in group["ocr"][:6]
+                ],
+                "speech": [
+                    {
+                        "time_seconds": item.get("start"),
+                        "text": item["value"],
+                    }
+                    for item in group["speech"]
+                ],
+            }
+            for group in groups[:MAX_MACHINE_GROUPS]
+        ],
+        "objects": objects,
+        "queries": queries,
+    }
+
+
+def _stage_section(stages):
+    lines = [
+        "## Приложение B. Состояние этапов и поправки",
+        "",
+        "| Этап | Статус | Наблюдений | Примечание |",
+        "| --- | --- | --- | --- |",
     ]
 
-    category_counts = Counter(
-        mapping(item.get("data")).get(
-            "category", "unspecified"
-        )
-        for item in object_items
-    )
+    for name, raw_stage in stages.items():
+        stage = mapping(raw_stage)
+        status = stage.get("status", "unknown")
+        note = stage.get("error") or stage.get("note") or ""
 
-    lines.extend([
-        "## 13. Визуальные признаки — сводка категорий",
-        "",
-        "Учитываются записи об объектах, включая "
-        "ещё не проверенные. Одна и та же вещь может "
-        "присутствовать в нескольких наблюдениях.",
-        "",
-        json_block({
-            CATEGORY_NAMES.get(category, category): count
-            for category, count in category_counts.items()
-        }),
-        "",
-    ])
-
-    append_section(
-        lines,
-        "14. Визуальные признаки — подробности",
-        visual,
-    )
-
-    # ---------- Визуальный профиль места ----------
-
-    visual_profile = stage_result(stages, "visual_profile")
-    profile = mapping(visual_profile.get("profile"))
-
-    lines.extend([
-        "## 15. Визуальный профиль места",
-        "",
-        "Освещённость, погода, сезон и тип ландшафта "
-        "оценены по цвету и текстуре кадров. Это "
-        "предварительные признаки, а не координаты.",
-        "",
-    ])
-
-    if profile:
-        lines.extend([
-            json_block(profile),
-            "",
-        ])
-    else:
-        lines.extend([
-            "Профиль не сформирован: этап «Визуальный "
-            "профиль места» не завершён.",
-            "",
-        ])
-
-    # ---------- Уникальные объекты ----------
-
-    scene_result = stage_result(
-        stages,
-        "scene_objects",
-    )
-
-    scene_objects = records(
-        scene_result.get("unique_objects")
-    )
-
-    if not scene_objects:
-        scene_objects = unique_objects_from_frames(
-            records(scene_result.get("frames"))
+        lines.append(
+            f"| {_table_cell(STAGE_NAMES.get(name, name))} "
+            f"| {_table_cell(STATUS_NAMES.get(status, status))} "
+            f"| {len(records(stage.get('observations')))} "
+            f"| {_table_cell(str(note)[:160])} |"
         )
 
-    lines.extend([
-        "## 16. Уникальные объекты и ориентиры",
-        "",
-        "Список типов объектов, найденных на кадрах видео. "
-        "Модель размечает классы, а не отдельные экземпляры, "
-        "поэтому один пункт может объединять несколько "
-        "похожих объектов. Таймкод указывает на лучший кадр.",
-        "",
-    ])
+    lines.append("")
 
-    if scene_objects:
-        for category in CATEGORY_ORDER:
-            items = [
-                item
-                for item in scene_objects
-                if item.get("category") == category
-            ]
+    corrections = []
 
-            if not items:
+    for name, raw_stage in stages.items():
+        for item in records(
+            mapping(raw_stage).get("observations")
+        ):
+            if item.get("corrected_text") is None:
                 continue
 
-            lines.extend([
-                f"### {CATEGORY_LABELS_RU.get(category, category)}",
-                "",
-            ])
+            corrections.append((
+                name,
+                item,
+            ))
 
-            for item in items:
-                lines.append(
-                    f"- **{item.get('label_ru') or item.get('label')}**"
-                    f" — {item.get('frame_count', 0)} кадр.; "
-                    f"до {item.get('max_area_percent', 0)}% кадра; "
-                    f"лучший кадр `{timestamp(item.get('best_timestamp'))}`."
-                )
-
-            lines.append("")
-    else:
+    if corrections:
         lines.extend([
-            "Уникальные объекты не найдены или этап "
-            "«Объекты и признаки места» не завершён.",
+            "### Поправки пользователя",
             "",
         ])
 
-    lines.extend(key_frames_section(stages, observations))
+        for name, item in corrections:
+            lines.append(
+                f"- {STAGE_NAMES.get(name, name)} · "
+                f"`{timestamp(item.get('start'))}`: "
+                f"{item.get('text', '')!r} → "
+                f"{item.get('corrected_text')!r}"
+            )
 
-    append_section(
-        lines,
-        "18. Звуковая структура и звуковые события",
-        select_items(
-            observations,
-            {"audio_structure", "audio_event"},
-        ),
+        lines.append("")
+
+    return lines
+
+
+# ============================================================
+# Главная функция
+# ============================================================
+
+def render_report(job):
+    stages = mapping(job.get("stages"))
+    observations = collect_observations(job)
+    passport = video_passport(job, stages)
+    gps = gps_items(stages)
+    speech = collect_speech(observations)
+    evidence = collect_evidence(observations, speech)
+    ocr = collect_ocr(observations)
+    roads = collect_roads(stages, observations)
+    intervals = road_intervals(roads)
+    mentions = speech_mentions(evidence)
+    groups = location_groups(
+        stages,
+        ocr,
+        roads,
+        mentions,
     )
+    objects = strongest_objects(stages)
 
-    # ---------- Новые направления ----------
+    dossier = stage_result(
+        stages,
+        "location_evidence",
+    ).get("dossier") or {}
+    countries = records(dossier.get("country_candidates"))
+    places = records(dossier.get("place_candidates"))
+    queries = search_queries(stages, evidence, ocr)
 
-    append_section(
-        lines,
-        "19. Пространственные отношения",
-        select_items(observations, {"relation"}),
-    )
-
-    append_section(
-        lines,
-        "20. Повторяющиеся надписи и визуальные совпадения",
-        select_items(
-            observations,
-            {"reappearance", "sequence"},
-        ),
-    )
-
-    append_section(
-        lines,
-        "21. Географические улики",
-        select_items(observations, {"location_evidence"}),
-    )
-
-    append_section(
-        lines,
-        "22. Метаданные — наблюдения",
-        select_items(observations, {"metadata"}),
-    )
-
-    # Не теряем новые типы наблюдений при расширении сервиса.
-    other = [
-        item
-        for item in observations
-        if item.get("source") not in KNOWN_SOURCES
+    lines = [
+        f"# Видео: {job.get('name') or 'без названия'} — "
+        "отчёт для поиска места съёмки",
+        "",
+        "> Отчёт собран из сохранённых результатов "
+        "анализаторов. Он содержит проверяемые улики, "
+        "а не подтверждённый адрес.",
+        "",
+        "## 1. Краткий вывод",
+        "",
     ]
 
-    if other:
-        append_section(
-            lines,
-            "Дополнительные наблюдения",
-            other,
+    lines.extend(
+        summary_lines(
+            passport,
+            gps,
+            evidence,
+            ocr,
+            intervals,
+            objects,
+            countries,
+            places,
         )
-
-    # ---------- Ограничения ----------
+    )
 
     lines.extend([
-        "## 23. Ограничения и правила интерпретации",
         "",
-        "- Отчёт содержит признаки и гипотезы, "
-        "а не подтверждённые географические выводы.",
-        "- GPS-тег файла может быть неточным, устаревшим "
-        "или унаследованным от другого устройства.",
-        "- Упоминание места в речи или надписи "
-        "не устанавливает место съёмки.",
-        "- Совпадение бренда, языка, валюты или телефона "
-        "сужает круг стран, но не даёт адрес.",
-        "- Визуальный профиль, звуковой фон и геометрия "
-        "дороги — предварительные оценки.",
-        "- Оригинальные результаты сохранены отдельно "
-        "от пользовательских исправлений.",
-        "- Отклонённые наблюдения оставлены в подробных "
-        "разделах для прослеживаемости.",
-        "- Таймкоды могут быть приблизительными.",
-        "- Визуальные описания, рамки и отношения "
-        "могут содержать ошибки модели.",
-        "- Слева, справа, выше и ниже относятся "
-        "к изображению, а не к сторонам света.",
-        "- Перед и за — предварительные интерпретации "
-        "глубины, не измерение расстояния.",
-        "- Звуковые категории являются предварительными "
-        "соответствиями; числовое сходство не является "
-        "вероятностью события.",
-        "- Похожие фрагменты не доказывают, что "
-        "на них изображён один объект.",
-        "- Порядок исследованных кадров не доказывает "
-        "непрерывность движения или маршрута.",
-        "- Повторяющиеся надписи не являются "
-        "независимыми подтверждениями.",
-        "- Отсутствие наблюдений не доказывает "
-        "отсутствие информации в видео.",
-        "- Изображения и аудио в Markdown не встроены. "
-        "Пути артефактов — ссылки на локальное "
-        "хранилище сервиса, не вложения в отчёт.",
-        "- В основные разделы включены текущие "
-        "доступные результаты этапов. Исторические "
-        "попытки целиком повторно не включаются.",
+        f"Сформировано: {datetime.now(timezone.utc).isoformat()}.",
         "",
     ])
+
+    lines.extend(_passport_section(passport))
+    lines.extend(_evidence_section(evidence))
+    lines.extend(_groups_section(groups))
+    lines.extend(
+        _road_section(stages, roads, intervals)
+    )
+    lines.extend(_ocr_section(ocr))
+    lines.extend(_speech_section(mentions, speech))
+    lines.extend(_visual_section(stages, objects))
+    lines.extend(_queries_section(queries))
+    lines.extend(_limitations_section())
+
+    machine = _machine_summary(
+        passport,
+        gps,
+        evidence,
+        ocr,
+        mentions,
+        roads,
+        intervals,
+        groups,
+        countries,
+        places,
+        objects,
+        queries,
+        stages,
+    )
+
+    lines.extend([
+        "## Приложение A. Машинно-читаемая сводка",
+        "",
+        "Компактная структура для интеллектуального поиска. "
+        "Содержит те же улики без служебных полей этапов.",
+        "",
+        json_block(machine),
+        "",
+    ])
+
+    lines.extend(_stage_section(stages))
 
     return "\n".join(lines).rstrip() + "\n"

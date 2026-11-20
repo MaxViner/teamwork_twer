@@ -4,14 +4,13 @@
 EasyOCR распознаёт русский и английский текст. Для каждой надписи
 сохраняется вырезка, координаты рамки и оценка уверенности.
 """
-
 import math
 from functools import lru_cache
 from pathlib import Path
 from typing import Callable
-
 from uuid import uuid4
-from app.media.frames import select_timestamps
+
+from app.media.frames import analysis_frame_count, select_timestamps
 from app.observations import observation
 from app.utils.packages import package_version
 from app.utils.paths import relative
@@ -40,7 +39,7 @@ def extract_ocr(
 
     from app.media.ffmpeg import extract_frame
 
-    count = options["max_frames"]
+    count = analysis_frame_count(options)
     times = select_timestamps(duration, count, stages)
 
     reader = ocr_reader()

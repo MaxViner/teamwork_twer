@@ -9,7 +9,8 @@ export default function UploadSettings({
                 <input
                     type="number"
                     min="1"
-                    max="50"
+                    max="2000"
+                    step="50"
                     value={options.max_frames}
                     onChange={(event) =>
                         onChange(
