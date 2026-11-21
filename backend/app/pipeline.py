@@ -21,6 +21,10 @@ from app.stages.audio_structure import extract_audio_structure
 from app.stages.context import extract_structure
 from app.stages.road_geometry import extract_road_geometry
 from app.stages.visual_profile import extract_visual_profile
+from app.stages.summary import extract_summary
+from app.stages.video_structure import extract_video_structure
+from app.stages.comprehension import extract_comprehension
+from app.stages.landmarks import extract_landmarks
 
 
 
@@ -36,6 +40,10 @@ STAGES = (
     "visual_profile",
     "road_geometry",
     "location_evidence",
+    "summary",
+    "video_structure",
+    "comprehension",
+    "landmarks",
 )
 
 
@@ -148,6 +156,38 @@ def run_stage(
 
 
         "structure": lambda: extract_structure(
+            folder,
+            run_folder,
+            stages,
+            progress,
+        ),
+
+
+        "summary": lambda: extract_summary(
+            folder,
+            run_folder,
+            stages,
+            progress,
+        ),
+
+
+        "video_structure": lambda: extract_video_structure(
+            folder,
+            run_folder,
+            stages,
+            progress,
+        ),
+
+
+        "comprehension": lambda: extract_comprehension(
+            folder,
+            run_folder,
+            stages,
+            progress,
+        ),
+
+
+        "landmarks": lambda: extract_landmarks(
             folder,
             run_folder,
             stages,

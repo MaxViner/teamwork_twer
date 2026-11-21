@@ -19,6 +19,7 @@ from app.keyframes import (
     group_frames,
     scene_intervals,
 )
+from app.places import clean_place
 from app.stages.scene_objects import (
     CATEGORY_LABELS_RU,
     CATEGORY_ORDER,
@@ -112,6 +113,10 @@ STAGE_NAMES = {
     "visual_profile": "Визуальный профиль",
     "road_geometry": "Геометрия дороги",
     "location_evidence": "Географические улики",
+    "summary": "Конспект",
+    "video_structure": "Структура видео",
+    "comprehension": "Проверка понимания",
+    "landmarks": "Ориентиры и геометрия",
 }
 
 STATUS_NAMES = {
@@ -210,129 +215,6 @@ def normalized_text(value):
 # ============================================================
 # Чистка упоминаний места
 # ============================================================
-
-PLACE_KEYWORD_RE = re.compile(
-    r"^(?:област|обл\.|район|кра[йяю]|республик|деревн|посёл|"
-    r"посел|сел[оа]|станиц|хутор|город|полуостров|озер|"
-    r"рек[аиу]|гор[аыу]|хребет|залив|порт|станци|вокзал|"
-    r"аэропорт|метро)",
-    re.IGNORECASE,
-)
-
-REGION_KEYWORD_RE = re.compile(
-    r"^(?:област|обл\.|район|кра[йяю]|республик)",
-    re.IGNORECASE,
-)
-
-# Слова, которые не могут быть названием места. Нужны, чтобы
-# «вот деревня была» не превращалось в «вот деревня».
-PLACE_STOPWORDS = {
-    "вот", "там", "тут", "здесь", "эта", "это", "этот", "такая",
-    "такой", "была", "был", "было", "были", "будет", "есть",
-    "начинается", "заканчивается", "стоит", "видно", "видна",
-    "и", "а", "но", "в", "во", "на", "из", "с", "со", "у", "к",
-    "ко", "по", "о", "об", "от", "до", "за", "под", "над", "при",
-    "для", "что", "как", "где", "когда", "тоже", "ещё", "еще",
-    "уже", "очень", "почти", "через", "около", "возле", "рядом",
-    "прямо", "сейчас", "потом", "тогда", "туда", "сюда", "назад",
-    "вперёд", "вперед", "дальше", "ближе", "самая", "самый",
-    "самое", "весь", "вся", "всё", "все", "один", "одна", "одно",
-}
-
-PLACE_ADJECTIVE_RE = re.compile(
-    r"(?:ская|ской|скую|ский|ского|скому|ском|ая|ой|ую|ий|"
-    r"ого|ому|им|ом|ые|ых|ым|ыми)$",
-    re.IGNORECASE,
-)
-
-WORD_RE = re.compile(r"[A-Za-zА-Яа-яЁё0-9\-]+")
-
-
-def _looks_named(token):
-    """Название места обычно с заглавной или похоже на adjective."""
-    if not token or token.casefold() in PLACE_STOPWORDS:
-        return False
-
-    if token[:1].isupper():
-        return True
-
-    return bool(PLACE_ADJECTIVE_RE.search(token))
-
-
-def place_tokens(value):
-    """
-    Достаёт короткие названия мест из длинной фразы.
-
-    «Приехал я в деревню, на дачу, в Тирскую область» даёт
-    «Тирскую область», а «ну вот деревня была» не даёт ничего.
-    """
-    tokens = WORD_RE.findall(str(value))
-    found = []
-
-    for index, token in enumerate(tokens):
-        if not PLACE_KEYWORD_RE.match(token):
-            continue
-
-        previous = tokens[index - 1] if index > 0 else None
-
-        if (
-            previous
-            and _looks_named(previous)
-            and not PLACE_KEYWORD_RE.match(previous)
-        ):
-            found.append(f"{previous} {token}")
-
-        following = (
-            tokens[index + 1]
-            if index + 1 < len(tokens)
-            else None
-        )
-
-        if (
-            following
-            and following[:1].isupper()
-            and following.casefold() not in PLACE_STOPWORDS
-            and not PLACE_KEYWORD_RE.match(following)
-        ):
-            found.append(f"{token} {following}")
-
-    result = []
-
-    for item in found:
-        cleaned = " ".join(item.split())
-        key = normalized_text(cleaned)
-
-        if key and key not in {
-            normalized_text(existing)
-            for existing in result
-        }:
-            result.append(cleaned)
-
-    return result
-
-
-def clean_place(value):
-    """Одно самое конкретное название места или None."""
-    found = place_tokens(value)
-
-    if not found:
-        return None
-
-    # Сначала регион/район, потом остальное: это полезнее
-    # для поиска на карте.
-    found.sort(
-        key=lambda item: (
-            0 if REGION_KEYWORD_RE.match(item.split()[-1]) else 1,
-            -len(item),
-        )
-    )
-
-    best = found[0]
-
-    if best[:1].islower():
-        best = best[0].upper() + best[1:]
-
-    return best
 
 
 def speech_time_for(value, speech):
@@ -623,6 +505,7 @@ def collect_speech(observations):
                     "start": start,
                     "end": end if end is not None else start,
                     "text": text,
+                    "speaker": segment.get("speaker"),
                 })
 
             continue
@@ -639,6 +522,7 @@ def collect_speech(observations):
             "start": start,
             "end": end if end is not None else start,
             "text": text,
+            "speaker": None,
         })
 
     return sorted(
@@ -1530,7 +1414,7 @@ def _passport_section(passport):
     ]
 
     lines = [
-        "## 2. Паспорт видео",
+        "## 4. Паспорт видео",
         "",
         "| Параметр | Значение |",
         "| --- | --- |",
@@ -1551,7 +1435,7 @@ def _passport_section(passport):
 
 def _evidence_section(evidence):
     lines = [
-        "## 3. Улики",
+        "## 5. Улики",
         "",
         "Прямые улики — то, что можно сразу искать на карте. "
         "Косвенные сужают регион и подтверждают гипотезу.",
@@ -1626,7 +1510,7 @@ def _evidence_section(evidence):
 
 def _groups_section(groups):
     lines = [
-        "## 4. Локации и ключевые кадры",
+        "## 6. Локации и ключевые кадры",
         "",
         "Кадры сгруппированы по сценам и непрерывным участкам. "
         "Внутри локации показаны самые полезные признаки, "
@@ -1733,7 +1617,7 @@ def _road_section(stages, roads, intervals):
         "road_geometry",
     ).get("summary") or {}
     lines = [
-        "## 5. Геометрия дороги и придорожные объекты",
+        "## 7. Геометрия дороги и придорожные объекты",
         "",
     ]
 
@@ -1799,7 +1683,7 @@ def _road_section(stages, roads, intervals):
 
 def _ocr_section(ocr):
     lines = [
-        "## 6. Текст на кадрах",
+        "## 9. Текст на кадрах",
         "",
         "Уникальные надписи после нормализации. "
         "Низкоуверенные и пустые распознавания отброшены.",
@@ -1842,7 +1726,7 @@ def _ocr_section(ocr):
 
 def _speech_section(mentions, speech):
     lines = [
-        "## 7. Речь",
+        "## 10. Речь",
         "",
     ]
 
@@ -1868,7 +1752,11 @@ def _speech_section(mentions, speech):
         ])
 
     lines.extend([
-        "### Транскрипция",
+        "### Расшифровка по спикерам",
+        "",
+        "Спикеры разделены приблизительно по высоте голоса. "
+        "Это помогает читать диалог, но не заменяет точную "
+        "диаризацию.",
         "",
     ])
 
@@ -1879,21 +1767,61 @@ def _speech_section(mentions, speech):
         ])
         return lines
 
-    for item in speech[:1000]:
-        lines.append(
-            f"- `{timestamp(item['start'])}` — "
-            f"{item['text']}"
+    turns = _speech_turns(speech)
+    has_speakers = any(
+        item.get("speaker") for item in speech
+    )
+
+    for turn in turns[:600]:
+        prefix = (
+            f"**{turn['speaker']}:** "
+            if has_speakers and turn.get("speaker")
+            else ""
         )
 
-    if len(speech) > 1000:
+        lines.append(
+            f"- `{timestamp(turn['start'])}` — "
+            f"{prefix}{turn['text']}"
+        )
+
+    if len(turns) > 600:
         lines.extend([
             "",
-            f"Показаны первые 1000 из {len(speech)} реплик.",
+            f"Показаны первые 600 из {len(turns)} реплик.",
         ])
 
     lines.append("")
 
     return lines
+
+
+def _speech_turns(speech):
+    """Склеивает соседние реплики одного спикера."""
+    turns = []
+
+    for item in speech:
+        speaker = item.get("speaker")
+        text = item["text"]
+        start = item["start"]
+        end = item.get("end") or start
+
+        if (
+            turns
+            and turns[-1]["speaker"] == speaker
+            and start - turns[-1]["end"] <= 2.0
+        ):
+            turns[-1]["text"] += " " + text
+            turns[-1]["end"] = end
+
+        else:
+            turns.append({
+                "speaker": speaker,
+                "start": start,
+                "end": end,
+                "text": text,
+            })
+
+    return turns
 
 
 def _visual_section(stages, objects):
@@ -1904,7 +1832,7 @@ def _visual_section(stages, objects):
     )
 
     lines = [
-        "## 8. Визуальный профиль и объекты",
+        "## 11. Визуальный профиль и объекты",
         "",
     ]
 
@@ -1913,19 +1841,25 @@ def _visual_section(stages, objects):
             "- **Профиль:** "
             + "; ".join(
                 _short_list([
-                    f"освещённость: {profile.get('lighting')}",
-                    f"погода: {profile.get('weather')}",
-                    f"сезон: {profile.get('season')}",
-                    f"сложность: {profile.get('complexity')}",
+                    f"освещённость: {_visual_value(profile.get('lighting'))}",
+                    f"погода: {_visual_value(profile.get('weather'))}",
+                    f"сезон: {_visual_value(profile.get('season'))}",
+                    f"сложность: {_visual_value(profile.get('complexity'))}",
                 ], 4)
             )
             + "."
         )
 
-        if profile.get("landscape"):
+        landscape = [
+            value
+            for value in (profile.get("landscape") or [])
+            if _visual_value(value)
+        ]
+
+        if landscape:
             lines.append(
                 "- **Ландшафт:** "
-                + ", ".join(profile["landscape"])
+                + ", ".join(landscape)
                 + "."
             )
 
@@ -1974,7 +1908,7 @@ def _visual_section(stages, objects):
 
 def _queries_section(queries):
     lines = [
-        "## 9. Что проверить на карте",
+        "## 12. Что проверить на карте",
         "",
     ]
 
@@ -1993,9 +1927,255 @@ def _queries_section(queries):
     return lines
 
 
+def _summary_section(stages):
+    if not isinstance(stages.get("summary"), dict):
+        return []
+
+    result = stage_result(stages, "summary")
+    lines = ["## 2. Конспект", ""]
+
+    if not result:
+        lines.extend([
+            "Конспект не сформирован: этап не завершён.",
+            "",
+        ])
+        return lines
+
+    if result.get("overview"):
+        lines.extend([
+            block(result["overview"]),
+            "",
+        ])
+
+    topics = records(result.get("topics"))
+
+    if topics:
+        lines.append(
+            "**Темы:** "
+            + ", ".join(
+                f"{item.get('word')} ({item.get('count')})"
+                for item in topics[:10]
+            )
+            + "."
+        )
+        lines.append("")
+
+    theses = records(result.get("theses"))
+
+    if theses:
+        lines.extend(["### Тезисы", ""])
+
+        for item in theses[:8]:
+            lines.append(
+                f"- `{timestamp(item.get('start'))}` — "
+                f"{item.get('text')}"
+            )
+
+        lines.append("")
+
+    conclusions = records(result.get("conclusions"))
+
+    if conclusions:
+        lines.extend(["### Выводы", ""])
+
+        for item in conclusions[:4]:
+            lines.append(
+                f"- `{timestamp(item.get('start'))}` — "
+                f"{item.get('text')}"
+            )
+
+        lines.append("")
+
+    return lines
+
+
+def _structure_section(stages):
+    if not isinstance(stages.get("video_structure"), dict):
+        return []
+
+    result = stage_result(stages, "video_structure")
+    sections = records(result.get("sections"))
+    lines = ["## 3. Структура видео", ""]
+
+    if not sections:
+        lines.extend([
+            "Структура не сформирована: этап не завершён.",
+            "",
+        ])
+        return lines
+
+    lines.extend([
+        "| Начало | Раздел | О чём |",
+        "| --- | --- | --- |",
+    ])
+
+    for section in sections:
+        lines.append(
+            f"| {timestamp(section.get('start'))} "
+            f"| {_table_cell(section.get('title') or '')} "
+            f"| {_table_cell(section.get('summary') or '')} |"
+        )
+
+    lines.append("")
+
+    return lines
+
+
+def _landmarks_section(stages):
+    if not isinstance(stages.get("landmarks"), dict):
+        return []
+
+    result = stage_result(stages, "landmarks")
+    lines = ["## 8. Ориентиры и геометрия кадров", ""]
+
+    if not result:
+        lines.extend([
+            "Ориентиры не оценены: этап не завершён.",
+            "",
+        ])
+        return lines
+
+    landmarks = records(result.get("landmarks"))
+    geometry = mapping(result.get("geometry"))
+
+    if landmarks:
+        lines.extend([
+            "| Ориентир | Кадров | Макс. площадь | Время |",
+            "| --- | --- | --- | --- |",
+        ])
+
+        for item in landmarks[:10]:
+            times = ", ".join(
+                timestamp(value)
+                for value in (item.get("timestamps") or [])[:4]
+            )
+
+            lines.append(
+                f"| {_table_cell(item.get('label') or '')} "
+                f"| {item.get('frame_count')} "
+                f"| {item.get('max_area_percent')}% "
+                f"| {times} |"
+            )
+
+        lines.append("")
+
+    else:
+        lines.extend([
+            "Узнаваемые ориентиры (церковь, памятник, "
+            "башня, дом) не найдены.",
+            "",
+        ])
+
+    parts = []
+
+    if geometry.get("median_horizon") is not None:
+        parts.append(
+            "горизонт около "
+            f"{geometry['median_horizon'] * 100:.0f}% высоты"
+        )
+
+    if geometry.get("median_vanishing_x") is not None:
+        parts.append(
+            "точка схода по X около "
+            f"{geometry['median_vanishing_x'] * 100:.0f}%"
+        )
+
+    vertical = mapping(geometry.get("vertical_profile"))
+
+    if vertical:
+        parts.append(
+            "вертикали: "
+            + ", ".join(
+                f"{name} — {count}"
+                for name, count in vertical.items()
+            )
+        )
+
+    if geometry.get("median_symmetry") is not None:
+        parts.append(
+            "симметрия "
+            f"{round(float(geometry['median_symmetry']) * 100)}%"
+        )
+
+    if parts:
+        lines.append(
+            "- **Геометрия:** " + "; ".join(parts) + "."
+        )
+        lines.append("")
+
+    frames = records(result.get("frames"))
+
+    if frames:
+        lines.extend(["### Кадры для сопоставления", ""])
+
+        for item in frames[:12]:
+            labels = ", ".join(
+                str(entry.get("label_ru") or entry.get("label"))
+                for entry in records(item.get("landmarks"))[:3]
+            )
+            signs = "; ".join(
+                f"«{value}»"
+                for value in (item.get("signs") or [])[:3]
+            )
+            detail = " · ".join(
+                value
+                for value in (labels, signs)
+                if value
+            )
+
+            lines.append(
+                f"- `{timestamp(item.get('timestamp'))}` — "
+                f"{item.get('geometry_text') or 'геометрия не оценена'}"
+                + (f" Видно: {detail}." if detail else "")
+            )
+
+        lines.append("")
+
+        if len(frames) > 12:
+            lines.append(
+                f"Показаны первые 12 из {len(frames)} кадров "
+                "с геометрией."
+            )
+            lines.append("")
+
+    return lines
+
+
+def _comprehension_section(stages):
+    if not isinstance(stages.get("comprehension"), dict):
+        return []
+
+    result = stage_result(stages, "comprehension")
+    questions = records(result.get("questions"))
+    lines = ["## 13. Вопросы для проверки", ""]
+
+    if not questions:
+        lines.extend([
+            "Вопросы не сформированы: этап не завершён.",
+            "",
+        ])
+        return lines
+
+    lines.extend([
+        "| Время | Вопрос | Ответ |",
+        "| --- | --- | --- |",
+    ])
+
+    for item in questions[:16]:
+        lines.append(
+            f"| {timestamp(item.get('time_seconds'))} "
+            f"| {_table_cell(item.get('question') or '')} "
+            f"| {_table_cell(item.get('answer') or '')} |"
+        )
+
+    lines.append("")
+
+    return lines
+
+
 def _limitations_section():
     return [
-        "## 10. Ограничения",
+        "## 14. Ограничения",
         "",
         "- Отчёт содержит улики и гипотезы, а не "
         "подтверждённый адрес.",
@@ -2150,7 +2330,59 @@ def _machine_summary(
         ],
         "objects": objects,
         "queries": queries,
+        "summary": _compact_summary(stages),
+        "structure": _compact_structure(stages),
+        "landmarks": _compact_landmarks(stages),
+        "questions": _compact_questions(stages),
     }
+
+
+def _compact_summary(stages):
+    result = stage_result(stages, "summary")
+
+    return {
+        "overview": result.get("overview"),
+        "topics": result.get("topics", [])[:10],
+        "theses": result.get("theses", [])[:8],
+        "conclusions": result.get("conclusions", [])[:4],
+    }
+
+
+def _compact_structure(stages):
+    result = stage_result(stages, "video_structure")
+
+    return [
+        {
+            "start_seconds": item.get("start"),
+            "end_seconds": item.get("end"),
+            "title": item.get("title"),
+            "summary": item.get("summary"),
+            "keywords": item.get("keywords", [])[:6],
+        }
+        for item in records(result.get("sections"))
+    ]
+
+
+def _compact_landmarks(stages):
+    result = stage_result(stages, "landmarks")
+
+    return {
+        "landmarks": result.get("landmarks", [])[:10],
+        "geometry": result.get("geometry") or {},
+    }
+
+
+def _compact_questions(stages):
+    result = stage_result(stages, "comprehension")
+
+    return [
+        {
+            "question": item.get("question"),
+            "answer": item.get("answer"),
+            "time_seconds": item.get("time_seconds"),
+        }
+        for item in records(result.get("questions"))[:12]
+    ]
 
 
 def _stage_section(stages):
@@ -2270,16 +2502,20 @@ def render_report(job):
         "",
     ])
 
+    lines.extend(_summary_section(stages))
+    lines.extend(_structure_section(stages))
     lines.extend(_passport_section(passport))
     lines.extend(_evidence_section(evidence))
     lines.extend(_groups_section(groups))
     lines.extend(
         _road_section(stages, roads, intervals)
     )
+    lines.extend(_landmarks_section(stages))
     lines.extend(_ocr_section(ocr))
     lines.extend(_speech_section(mentions, speech))
     lines.extend(_visual_section(stages, objects))
     lines.extend(_queries_section(queries))
+    lines.extend(_comprehension_section(stages))
     lines.extend(_limitations_section())
 
     machine = _machine_summary(

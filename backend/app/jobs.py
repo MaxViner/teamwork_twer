@@ -267,6 +267,10 @@ def stage_enabled(
         "road_geometry": "road_geometry",
         "audio_structure": "audio_structure",
         "structure": "structure",
+        "summary": "summary",
+        "video_structure": "video_structure",
+        "comprehension": "comprehension",
+        "landmarks": "landmarks",
         "visual": "visual",
         "audio_events": "audio_events",
     }
@@ -289,6 +293,10 @@ def stage_enabled(
         "road_geometry",
         "audio_structure",
         "structure",
+        "summary",
+        "video_structure",
+        "comprehension",
+        "landmarks",
     )
 
 

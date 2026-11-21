@@ -3,204 +3,219 @@
 }
 
 
-.keyframe-list {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 16px;
-    margin-top: 18px;
+.kf-total {
+    color: var(--muted);
+    font-size: 13px;
+    white-space: nowrap;
 }
 
 
-.keyframe-card {
+.kf-group-bar {
     display: flex;
     flex-direction: column;
-    min-width: 0;
-    overflow: hidden;
-    border: 1px solid var(--line);
-    border-radius: 16px;
-    background: rgba(255, 255, 255, 0.03);
-}
-
-
-.keyframe-thumb {
-    position: relative;
-    display: block;
-    width: 100%;
-    aspect-ratio: 16 / 9;
-    padding: 0;
-    overflow: hidden;
-    border: 0;
-    border-radius: 0;
-    background: #0a0b0d;
-}
-
-
-.keyframe-thumb img {
-    display: block;
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-    transition: transform 220ms ease;
-}
-
-
-.keyframe-thumb:hover img {
-    transform: scale(1.03);
-}
-
-
-.keyframe-time {
-    position: absolute;
-    left: 10px;
-    bottom: 10px;
-    padding: 4px 9px;
-    border: 1px solid rgba(255, 255, 255, 0.18);
-    border-radius: 999px;
-    background: rgba(8, 9, 11, 0.74);
-    color: var(--text);
-    font-size: 12px;
-    font-variant-numeric: tabular-nums;
-}
-
-
-.keyframe-body {
-    display: grid;
-    gap: 11px;
-    padding: 14px;
-}
-
-
-.keyframe-head {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: 8px;
-}
-
-
-.keyframe-head strong {
-    font-size: 15px;
-}
-
-
-.keyframe-scene {
-    color: var(--text-secondary);
-    font-size: 12px;
-    font-variant-numeric: tabular-nums;
-}
-
-
-.keyframe-row {
-    display: grid;
-    grid-template-columns: 80px minmax(0, 1fr);
     gap: 10px;
-    align-items: start;
+    margin-top: 14px;
 }
 
 
-.keyframe-label {
-    padding-top: 3px;
-    color: var(--muted);
-    font-size: 11px;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-}
-
-
-.keyframe-chips {
+.kf-group-chips {
     display: flex;
     flex-wrap: wrap;
-    gap: 6px;
-}
-
-
-.keyframe-chip {
-    padding: 3px 8px;
-    border: 1px solid var(--line);
-    border-radius: 999px;
-    background: rgba(255, 255, 255, 0.04);
-    color: var(--text-secondary);
-    font-size: 12px;
-}
-
-
-.keyframe-text {
-    display: grid;
-    gap: 3px;
-    font-size: 13px;
-    line-height: 1.45;
-}
-
-
-.keyframe-text p {
-    margin: 0;
-}
-
-
-.keyframe-text .muted {
-    font-size: 12px;
-}
-
-
-.keyframe-metrics {
-    color: var(--muted);
-    font-size: 11.5px;
-    font-variant-numeric: tabular-nums;
-}
-
-
-.keyframe-row-speech {
-    padding-top: 8px;
-    border-top: 1px solid var(--line);
-}
-
-
-.keyframe-speech {
-    display: grid;
-    gap: 3px;
-}
-
-
-.keyframe-speech-row {
-    display: grid;
-    grid-template-columns: 52px minmax(0, 1fr);
     gap: 8px;
-    align-items: baseline;
-    width: 100%;
-    padding: 4px 0;
-    border: 0;
-    border-radius: 0;
-    background: none;
+}
+
+
+.kf-group-chip {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+    padding: 8px 12px;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: var(--bg-soft);
     color: var(--text-secondary);
-    font-size: 12.5px;
-    line-height: 1.45;
+    cursor: pointer;
     text-align: left;
 }
 
 
-.keyframe-speech-row:hover {
-    background: none;
+.kf-group-chip strong {
     color: var(--text);
+    font-size: 13px;
 }
 
 
-.keyframe-speech-time {
+.kf-group-chip span {
+    font-size: 11px;
+    color: var(--muted);
+}
+
+
+.kf-group-chip:hover {
+    border-color: var(--line-strong);
+}
+
+
+.kf-group-chip.is-active {
+    border-color: var(--accent-border);
+    background: var(--accent-soft);
+}
+
+
+.kf-group-chip.is-active strong {
     color: var(--accent-strong);
-    font-size: 11.5px;
+}
+
+
+.kf-pager {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+}
+
+
+.kf-pager-button {
+    width: 30px;
+    height: 30px;
+    padding: 0;
+    border-radius: 9px;
+    background: var(--bg-soft);
+    color: var(--text-secondary);
+    cursor: pointer;
+}
+
+
+.kf-pager-button:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+}
+
+
+.kf-detail {
+    margin-top: 16px;
+    padding-top: 16px;
+    border-top: 1px solid var(--line);
+}
+
+
+.kf-detail-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+
+.kf-detail-head h3 {
+    margin: 0;
+    font-size: 15px;
+}
+
+
+.kf-detail-head p {
+    margin: 3px 0 0;
+    font-size: 12px;
+}
+
+
+.kf-summary {
+    display: grid;
+    gap: 4px;
+    margin: 12px 0;
+    font-size: 13px;
+    color: var(--text-secondary);
+}
+
+
+.kf-summary p {
+    margin: 0;
+}
+
+
+.kf-label {
+    color: var(--muted);
+}
+
+
+.kf-frame-grid {
+    display: grid;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    gap: 8px;
+}
+
+
+.kf-frame {
+    position: relative;
+    display: block;
+    padding: 0;
+    overflow: hidden;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: #0a0b0d;
+    cursor: pointer;
+    aspect-ratio: 16 / 9;
+}
+
+
+.kf-frame img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    transition: transform 180ms ease;
+}
+
+
+.kf-frame:hover img {
+    transform: scale(1.04);
+}
+
+
+.kf-frame-time {
+    position: absolute;
+    left: 6px;
+    bottom: 6px;
+    padding: 2px 6px;
+    border-radius: 6px;
+    background: rgba(8, 9, 11, 0.78);
+    color: #f4f6f8;
+    font-size: 11px;
     font-variant-numeric: tabular-nums;
 }
 
 
-@media (max-width: 900px) {
-    .keyframe-list {
-        grid-template-columns: 1fr;
+.kf-frame-road {
+    position: absolute;
+    right: 6px;
+    top: 6px;
+    max-width: calc(100% - 12px);
+    padding: 2px 6px;
+    border-radius: 6px;
+    background: rgba(255, 138, 61, 0.85);
+    color: #1a1206;
+    font-size: 10px;
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+
+@media (max-width: 1100px) {
+    .kf-frame-grid {
+        grid-template-columns: repeat(4, minmax(0, 1fr));
     }
 }
 
 
-@media (max-width: 560px) {
-    .keyframe-row {
-        grid-template-columns: 68px minmax(0, 1fr);
+@media (max-width: 640px) {
+    .kf-frame-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .kf-detail-head {
+        flex-direction: column;
     }
 }

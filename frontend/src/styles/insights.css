@@ -1,0 +1,497 @@
+.insight-panel,
+.transcript-panel,
+.geometry-panel,
+.comprehension-panel,
+.search-panel {
+    margin-top: 20px;
+}
+
+
+.insight-count {
+    color: var(--muted);
+    font-size: 12px;
+    white-space: nowrap;
+}
+
+
+.insight-overview {
+    margin: 14px 0 0;
+    padding: 14px 16px;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: var(--bg-soft);
+    color: var(--text-secondary);
+    line-height: 1.65;
+}
+
+
+.insight-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 10px;
+}
+
+
+.insight-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 4px 9px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.035);
+    color: var(--text-secondary);
+    font-size: 12px;
+    line-height: 1.4;
+}
+
+
+.insight-chip small {
+    color: var(--muted);
+    font-size: 10px;
+}
+
+
+.insight-chip-button {
+    cursor: pointer;
+    font: inherit;
+    font-size: 12px;
+    transition: border-color 160ms ease, background-color 160ms ease;
+}
+
+
+.insight-chip-button:hover {
+    border-color: var(--line-strong);
+}
+
+
+.insight-chip-button.is-active {
+    border-color: var(--accent-border);
+    background: var(--accent-soft);
+    color: var(--accent-strong);
+}
+
+
+.insight-block {
+    margin-top: 16px;
+}
+
+
+.insight-block h3 {
+    margin: 0 0 8px;
+    font-size: 13px;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+    color: var(--muted);
+}
+
+
+.insight-list {
+    display: grid;
+    gap: 8px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+
+.insight-list li {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 9px 12px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--bg-soft);
+    color: var(--text-secondary);
+    font-size: 13px;
+    line-height: 1.55;
+}
+
+
+.insight-time {
+    flex-shrink: 0;
+    border: 1px solid var(--line);
+    border-radius: 7px;
+    padding: 2px 7px;
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--accent-strong);
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    cursor: pointer;
+    line-height: 1.5;
+    transition: border-color 160ms ease, background-color 160ms ease;
+}
+
+
+.insight-time:hover {
+    border-color: var(--accent-border);
+    background: var(--accent-soft);
+}
+
+
+.insight-search {
+    margin-top: 12px;
+    max-width: 420px;
+}
+
+
+.insight-pager {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 14px;
+}
+
+
+.insight-page-button {
+    width: 30px;
+    height: 30px;
+    padding: 0;
+    border-radius: 9px;
+    background: var(--bg-soft);
+    color: var(--text-secondary);
+    font-size: 13px;
+}
+
+
+.insight-page-button:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+}
+
+
+/* Структура видео */
+
+.structure-list {
+    display: grid;
+    gap: 6px;
+    margin-top: 14px;
+}
+
+
+.structure-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 10px 12px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--bg-soft);
+}
+
+
+.structure-row strong {
+    display: block;
+    color: var(--text);
+    font-size: 14px;
+}
+
+
+.structure-row p {
+    margin: 4px 0 0;
+}
+
+
+.structure-row .insight-chips {
+    margin-top: 8px;
+}
+
+
+/* Расшифровка */
+
+.transcript-tools {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 12px;
+}
+
+
+.transcript-tools .insight-chips {
+    margin-top: 0;
+}
+
+
+.transcript-note {
+    margin: 10px 0 0;
+}
+
+
+.transcript-list {
+    display: grid;
+    gap: 4px;
+    margin: 14px 0 0;
+    padding: 0;
+    list-style: none;
+}
+
+
+.transcript-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 7px 10px;
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.02);
+    font-size: 13px;
+    line-height: 1.6;
+}
+
+
+.transcript-row:nth-child(odd) {
+    background: rgba(255, 255, 255, 0.035);
+}
+
+
+.transcript-text {
+    color: var(--text-secondary);
+}
+
+
+.transcript-speaker {
+    color: var(--accent-strong);
+    font-weight: 650;
+}
+
+
+/* Геометрия и ориентиры */
+
+.geometry-landmarks {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+    gap: 8px;
+    margin-top: 14px;
+}
+
+
+.geometry-landmark {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 10px 12px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--bg-soft);
+}
+
+
+.geometry-landmark strong {
+    color: var(--text);
+    font-size: 13px;
+}
+
+
+.geometry-landmark span {
+    color: var(--muted);
+    font-size: 12px;
+}
+
+
+.geometry-landmark-times {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+    margin-top: 2px;
+}
+
+
+.geometry-facts {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+
+.geometry-facts li {
+    padding: 4px 9px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.035);
+    color: var(--text-secondary);
+    font-size: 12px;
+}
+
+
+.geometry-frames {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+    gap: 10px;
+    margin-top: 16px;
+}
+
+
+.geometry-frame {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    padding: 0;
+    overflow: hidden;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--bg-soft);
+    text-align: left;
+    cursor: pointer;
+}
+
+
+.geometry-frame:hover {
+    border-color: var(--line-strong);
+}
+
+
+.geometry-frame-media {
+    position: relative;
+    display: block;
+    aspect-ratio: 16 / 9;
+    background: #0a0b0d;
+}
+
+
+.geometry-frame-media img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+
+.geometry-frame-text {
+    display: block;
+    padding: 8px 10px 10px;
+    color: var(--text-secondary);
+    font-size: 12px;
+    line-height: 1.5;
+}
+
+
+.geometry-frame-text em {
+    color: var(--muted);
+    font-style: normal;
+}
+
+
+/* Проверка понимания */
+
+.comprehension-list {
+    display: grid;
+    gap: 6px;
+    margin-top: 14px;
+}
+
+
+.comprehension-item {
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--bg-soft);
+    overflow: hidden;
+}
+
+
+.comprehension-item.is-open {
+    border-color: var(--line-strong);
+}
+
+
+.comprehension-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 8px 12px;
+}
+
+
+.comprehension-question {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--text);
+    font-size: 13px;
+    line-height: 1.5;
+    text-align: left;
+    cursor: pointer;
+}
+
+
+.comprehension-question:hover {
+    background: none;
+    border-color: transparent;
+    color: var(--accent-strong);
+}
+
+
+.comprehension-mark {
+    flex-shrink: 0;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+}
+
+
+.comprehension-meta {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+}
+
+
+.comprehension-answer {
+    margin: 0;
+    padding: 0 12px 12px 32px;
+    color: var(--text-secondary);
+    font-size: 13px;
+    line-height: 1.6;
+}
+
+
+/* Поиск */
+
+.search-results {
+    display: grid;
+    gap: 6px;
+    margin-top: 14px;
+}
+
+
+.search-result {
+    padding: 9px 12px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--bg-soft);
+}
+
+
+.search-result-meta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+}
+
+
+.search-result-text {
+    margin: 6px 0 0;
+    color: var(--text-secondary);
+    font-size: 13px;
+    line-height: 1.55;
+}
+
+
+@media (max-width: 640px) {
+    .comprehension-head {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    .geometry-frames {
+        grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    }
+}

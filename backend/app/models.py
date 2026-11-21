@@ -30,6 +30,10 @@ class AnalyzeOptions(BaseModel):
     road_geometry: bool = True
     audio_structure: bool = True
     structure: bool = True
+    summary: bool = True
+    video_structure: bool = True
+    comprehension: bool = True
+    landmarks: bool = True
 
 
 
@@ -81,6 +85,10 @@ class Observation(BaseModel):
         "visual_profile",
         "road_geometry",
         "location_evidence",
+        "summary",
+        "video_structure",
+        "comprehension",
+        "landmarks",
     ]
 
 

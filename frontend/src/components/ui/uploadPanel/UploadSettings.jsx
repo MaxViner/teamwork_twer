@@ -21,6 +21,12 @@ export default function UploadSettings({
                         )
                     }
                 />
+
+                <span className="muted">
+                    По умолчанию 500. Для длинных видео
+                    имеет смысл 500–2000: кадры
+                    распределяются по сценам и локациям.
+                </span>
             </label>
 
 

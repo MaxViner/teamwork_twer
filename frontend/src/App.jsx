@@ -8,6 +8,12 @@ import FindingsPanel from "./components/FindingsPanel.jsx";
 import LocationDossier from "./components/LocationDossier.jsx";
 import LandmarksPanel from "./components/LandmarksPanel.jsx";
 import KeyFramesPanel from "./components/KeyFramesPanel.jsx";
+import SummaryPanel from "./components/SummaryPanel.jsx";
+import StructurePanel from "./components/StructurePanel.jsx";
+import TranscriptPanel from "./components/TranscriptPanel.jsx";
+import GeometryPanel from "./components/GeometryPanel.jsx";
+import ComprehensionPanel from "./components/ComprehensionPanel.jsx";
+import SearchPanel from "./components/SearchPanel.jsx";
 import { COMBINED_SOURCES } from "./constants/labels.js";
 import { useJobs } from "./hooks/useJobs.js";
 import { useJobPolling } from "./hooks/useJobPolling.js";
@@ -339,6 +345,43 @@ export default function App() {
 
 
                     <KeyFramesPanel
+                        job={job}
+                        onSeek={seek}
+                    />
+
+
+                    <GeometryPanel
+                        job={job}
+                        onSeek={seek}
+                    />
+
+
+                    <SummaryPanel
+                        job={job}
+                        onSeek={seek}
+                    />
+
+
+                    <StructurePanel
+                        job={job}
+                        onSeek={seek}
+                    />
+
+
+                    <TranscriptPanel
+                        job={job}
+                        onSeek={seek}
+                    />
+
+
+                    <SearchPanel
+                        job={job}
+                        onSeek={seek}
+                        onError={onError}
+                    />
+
+
+                    <ComprehensionPanel
                         job={job}
                         onSeek={seek}
                     />

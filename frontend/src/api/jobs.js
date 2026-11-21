@@ -24,6 +24,13 @@ export const fetchJob = (id) =>
 
 
 
+export const searchJob = (id, query) =>
+    request(
+        `/jobs/${id}/search?q=${encodeURIComponent(query)}`,
+    );
+
+
+
 export function createJob({
     file,
     options,

@@ -35,6 +35,7 @@ from app.jobs import (
 from app.models import AnalyzeOptions, ReviewPatch
 from app.pipeline import STAGES
 from app.reporting import render_report
+from app.search import search_job
 
 MAX_UPLOAD_BYTES = 1024 * 1024 * 1024
 
@@ -177,6 +178,20 @@ def get_job(job_id: str):
         stage.pop("history")
 
     return job
+
+
+@appServer.get("/api/jobs/{job_id}/search")
+def search_inside_job(job_id: str, q: str = "", limit: int = 60):
+    job = load_job(job_id)
+
+    return {
+        "query": q,
+        "results": search_job(
+            job,
+            q,
+            limit=max(1, min(200, limit)),
+        ),
+    }
 
 
 @appServer.post("/api/jobs/{job_id}/retry/{stage}", status_code=202)

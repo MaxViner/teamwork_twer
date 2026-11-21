@@ -8,6 +8,10 @@ export const DEFAULT_UPLOAD_OPTIONS = {
     visual_profile: true,
     road_geometry: true,
     location_evidence: true,
+    summary: true,
+    video_structure: true,
+    comprehension: true,
+    landmarks: true,
 
 
     language: null,
@@ -78,5 +82,33 @@ export const UPLOAD_TOGGLES = [
         name: "location_evidence",
         title: "Искать место съёмки",
         description: "Собирает GPS, адреса, бренды, язык и визуальный профиль в досье со страной и местами-кандидатами.",
+    },
+
+
+    {
+        name: "summary",
+        title: "Составлять конспект",
+        description: "Выделяет темы, тезисы и выводы по речи, надписям и объектам.",
+    },
+
+
+    {
+        name: "video_structure",
+        title: "Делить видео на разделы",
+        description: "Создаёт автоматические таймкоды с названиями разделов для навигации.",
+    },
+
+
+    {
+        name: "comprehension",
+        title: "Готовить вопросы по содержанию",
+        description: "Строит вопросы и ответы по фактам видео для проверки понимания.",
+    },
+
+
+    {
+        name: "landmarks",
+        title: "Определять ориентиры и геометрию кадров",
+        description: "Ищет церкви, памятники, башни и дома, оценивает горизонт и точку схода для сопоставления с картой.",
     },
 ];

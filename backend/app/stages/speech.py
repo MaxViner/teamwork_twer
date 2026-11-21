@@ -13,6 +13,7 @@ from typing import Callable
 
 from app.errors import SkipStage
 from app.media.ffmpeg import extract_audio
+from app.media.voice import assign_speakers
 from app.observations import observation
 from app.utils.packages import package_version
 from app.utils.paths import relative
@@ -104,12 +105,19 @@ def extract_speech(
 
     progress(100.0, "Распознавание речи завершено")
 
+    speech_segments, speakers, speaker_method = assign_speakers(
+        audio,
+        speech_segments,
+    )
+
     observations = _build_observations(
         folder=folder,
         audio=audio,
         segments=speech_segments,
         options=options,
         info=info,
+        speakers=speakers,
+        speaker_method=speaker_method,
     )
 
     return {
@@ -117,6 +125,8 @@ def extract_speech(
         "language_probability": float(info.language_probability),
         "segment_count": len(speech_segments),
         "segments": speech_segments,
+        "speakers": speakers,
+        "speaker_method": speaker_method,
         "observations": observations,
     }
 
@@ -127,6 +137,8 @@ def _build_observations(
     segments: list[dict],
     options: dict,
     info,
+    speakers: list[dict] | None = None,
+    speaker_method: str | None = None,
 ) -> list[dict]:
     """Складывает все реплики в одно наблюдение-сводку."""
 
@@ -150,6 +162,8 @@ def _build_observations(
                 "language": info.language,
                 "segment_count": len(segments),
                 "segments": segments,
+                "speakers": speakers or [],
+                "speaker_method": speaker_method,
                 "time_is_approximate": True,
             },
         )

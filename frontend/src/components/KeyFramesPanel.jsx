@@ -1,190 +1,154 @@
+import { useEffect, useMemo, useState } from "react";
 import { fileUrl } from "../utils/fileUrl.js";
 import { formatTime } from "../utils/formatTime.js";
 
 
-const SPEECH_WINDOW_SECONDS = 10;
-
-const SPEECH_LIMIT = 5;
-
-const MATCH_TOLERANCE_SECONDS = 0.75;
-
-const ROAD_MATCH_TOLERANCE_SECONDS = 0.2;
-
-const ROAD_SEMANTIC_LABELS = [
-    "road",
-    "path",
-    "bridge",
-];
-
-const ROAD_SEMANTIC_MIN_PERCENT = 1;
+const GROUP_GAP_SECONDS = 30;
+const GROUPS_PER_PAGE = 12;
+const FRAMES_PER_PAGE = 18;
+const ROAD_TOLERANCE_SECONDS = 0.2;
+const ROAD_MIN_PERCENT = 1;
 
 
-function frameResult(job, stageId) {
-    const frames = job?.stages?.[stageId]?.result?.frames;
-
-    return Array.isArray(frames) ? frames : [];
+function stageResult(job, stageId) {
+    return job?.stages?.[stageId]?.result || {};
 }
 
 
-function roundTime(value) {
-    return Math.round(value * 1000) / 1000;
-}
+function collectFrames(job) {
+    const collected = new Map();
 
+    for (const stageId of ["visual_profile", "scene_objects", "ocr"]) {
+        const frames = stageResult(job, stageId).frames;
 
-function nearest(items, timestamp) {
-    let best = null;
-
-    for (const item of items) {
-        const start = Number(item?.start);
-
-        if (!Number.isFinite(start)) {
+        if (!Array.isArray(frames)) {
             continue;
         }
 
-        const diff = Math.abs(start - timestamp);
+        for (const frame of frames) {
+            const timestamp = Number(frame?.timestamp);
 
-        if (!best || diff < best.diff) {
-            best = {
-                item,
-                diff,
-            };
-        }
-    }
+            if (!Number.isFinite(timestamp)) {
+                continue;
+            }
 
-    if (!best || best.diff > MATCH_TOLERANCE_SECONDS) {
-        return null;
-    }
+            const key = Math.round(timestamp * 1000);
 
-    return best.item;
-}
-
-
-function buildFrames(job) {
-    const collected = new Map();
-
-    const add = (frame) => {
-        const timestamp = Number(frame?.timestamp);
-
-        if (!Number.isFinite(timestamp)) {
-            return;
-        }
-
-        const key = roundTime(timestamp);
-
-        let entry = collected.get(key);
-
-        if (!entry) {
-            entry = {
+            const item = collected.get(key) || {
                 timestamp,
                 artifact: null,
                 objects: [],
-                metrics: null,
-                descriptors: null,
+                descriptors: {},
+                metrics: {},
             };
 
-            collected.set(key, entry);
-        }
-
-        if (!entry.artifact && frame.artifact) {
-            entry.artifact = frame.artifact;
-        }
-
-        if (Array.isArray(frame.objects)) {
-            entry.objects = frame.objects;
-        }
-
-        if (frame.metrics) {
-            entry.metrics = frame.metrics;
-        }
-
-        if (frame.descriptors) {
-            entry.descriptors = frame.descriptors;
-        }
-    };
-
-    for (const frame of frameResult(job, "visual_profile")) {
-        add(frame);
-    }
-
-    for (const frame of frameResult(job, "scene_objects")) {
-        add(frame);
-    }
-
-    for (const frame of frameResult(job, "ocr")) {
-        add(frame);
-    }
-
-    return [...collected.values()].sort(
-        (a, b) => a.timestamp - b.timestamp,
-    );
-}
-
-
-function ocrObservations(job) {
-    return (job?.stages?.ocr?.observations || []).filter(
-        (item) => item.source === "ocr",
-    );
-}
-
-
-function roadSegments(job) {
-    const observations = job?.stages?.road_geometry?.observations || [];
-
-    const segments = [];
-
-    for (const observation of observations) {
-        const stored = observation?.data?.segments;
-
-        if (Array.isArray(stored) && stored.length) {
-            for (const segment of stored) {
-                segments.push({
-                    ...segment,
-                    artifact: segment.artifact || observation.artifact,
-                });
+            if (!item.artifact && frame.artifact) {
+                item.artifact = frame.artifact;
             }
 
-            continue;
-        }
+            if (Array.isArray(frame.objects) && frame.objects.length) {
+                item.objects = frame.objects;
+            }
 
-        if (observation.source !== "road_geometry") {
-            continue;
-        }
+            if (frame.descriptors && Object.keys(frame.descriptors).length) {
+                item.descriptors = frame.descriptors;
+            }
 
-        segments.push({
-            start: observation.start,
-            end: observation.end,
-            text: observation.corrected_text ?? observation.text,
-            artifact: observation.artifact,
-            confidence: observation.data?.confidence,
-            semantic_road_percent: observation.data?.semantic_road_percent,
-        });
+            if (frame.metrics && Object.keys(frame.metrics).length) {
+                item.metrics = frame.metrics;
+            }
+
+            collected.set(key, item);
+        }
     }
 
-    const semantic = semanticRoadFrames(job);
-
-    return segments.filter(
-        (segment) => roadAllowedByMask(semantic, Number(segment.start)),
-    );
+    return [...collected.values()].sort((a, b) => a.timestamp - b.timestamp);
 }
 
 
-function semanticRoadFrames(job) {
-    const result = job?.stages?.scene_objects?.result;
+function sceneIntervals(job) {
+    const intervals = stageResult(job, "scenes").intervals;
 
-    if (
-        result?.method
-        && result.method !== "segformer"
-    ) {
+    if (!Array.isArray(intervals)) {
+        return [];
+    }
+
+    return intervals
+        .filter((value) => Array.isArray(value) && value.length >= 2)
+        .map((value) => [Number(value[0]), Number(value[1])])
+        .filter(([start, end]) => Number.isFinite(start) && Number.isFinite(end) && end > start)
+        .sort((a, b) => a[0] - b[0]);
+}
+
+
+function sceneIndex(intervals, moment) {
+    for (let index = 0; index < intervals.length; index += 1) {
+        const [start, end] = intervals[index];
+
+        if (start <= moment && moment < end) {
+            return index;
+        }
+    }
+
+    return null;
+}
+
+
+function groupFrames(frames, intervals) {
+    const groups = [];
+
+    for (const frame of frames) {
+        const index = sceneIndex(intervals, frame.timestamp);
+        const key = index === null ? "free" : `scene:${index}`;
+        const current = groups[groups.length - 1];
+
+        if (
+            !current
+            || current.key !== key
+            || frame.timestamp - current.end > GROUP_GAP_SECONDS
+        ) {
+            groups.push({
+                key,
+                sceneIndexes: index === null ? [] : [index],
+                start: frame.timestamp,
+                end: frame.timestamp,
+                frames: [frame],
+            });
+
+            continue;
+        }
+
+        current.frames.push(frame);
+        current.end = frame.timestamp;
+
+        if (index !== null && !current.sceneIndexes.includes(index)) {
+            current.sceneIndexes.push(index);
+        }
+    }
+
+    return groups.map((group, index) => ({
+        ...group,
+        number: index + 1,
+        sceneNumbers: group.sceneIndexes.map((value) => value + 1),
+    }));
+}
+
+
+function semanticRoadMap(job) {
+    const stage = job?.stages?.scene_objects;
+    const method = stage?.result?.method;
+
+    if (method && method !== "segformer") {
         return null;
     }
 
-    const frames = result?.frames;
+    const frames = stage?.result?.frames;
 
     if (!Array.isArray(frames) || !frames.length) {
         return null;
     }
 
-    const evidence = new Map();
+    const map = new Map();
 
     for (const frame of frames) {
         const timestamp = Number(frame?.timestamp);
@@ -196,418 +160,361 @@ function semanticRoadFrames(job) {
         let percent = 0;
 
         for (const item of frame.objects || []) {
-            if (ROAD_SEMANTIC_LABELS.includes(item?.label)) {
-                percent += Number(item.area_percent) || 0;
+            if (["road", "path", "bridge"].includes(item.label)) {
+                percent += Number(item.area_percent || 0);
             }
         }
 
-        evidence.set(roundTime(timestamp), percent);
+        map.set(Math.round(timestamp * 1000) / 1000, percent);
     }
 
-    return evidence.size ? evidence : null;
+    return map.size ? map : null;
 }
 
 
-function roadAllowedByMask(evidence, timestamp) {
-    if (!evidence || !Number.isFinite(timestamp)) {
-        return true;
+function roadSegments(job) {
+    const stage = job?.stages?.road_geometry;
+
+    if (!stage) {
+        return [];
     }
 
-    let nearestKey = null;
-    let nearestDiff = Infinity;
-
-    for (const key of evidence.keys()) {
-        const diff = Math.abs(key - timestamp);
-
-        if (diff < nearestDiff) {
-            nearestKey = key;
-            nearestDiff = diff;
-        }
-    }
-
-    if (
-        nearestKey === null
-        || nearestDiff > ROAD_MATCH_TOLERANCE_SECONDS
-    ) {
-        return false;
-    }
-
-    return evidence.get(nearestKey) >= ROAD_SEMANTIC_MIN_PERCENT;
-}
-
-
-function speechSegments(job) {
-    const observations = job?.stages?.speech?.observations || [];
-
+    const evidence = semanticRoadMap(job);
     const segments = [];
 
-    for (const observation of observations) {
+    for (const observation of stage.observations || []) {
         const stored = observation?.data?.segments;
 
-        if (Array.isArray(stored) && stored.length) {
-            for (const segment of stored) {
-                segments.push({
-                    start: Number(segment.start),
-                    end: Number(segment.end ?? segment.start),
-                    text: segment.text || "",
-                });
-            }
-
-            continue;
-        }
-
-        if (observation.source === "speech") {
-            segments.push({
-                start: Number(observation.start),
-                end: Number(observation.end ?? observation.start),
-                text: observation.corrected_text ?? observation.text ?? "",
-            });
+        if (Array.isArray(stored)) {
+            segments.push(...stored);
         }
     }
 
     return segments
+        .map((segment) => ({
+            ...segment,
+            start: Number(segment.start),
+        }))
         .filter((segment) => Number.isFinite(segment.start))
+        .filter((segment) => {
+            if (!evidence) {
+                return true;
+            }
+
+            let nearest = null;
+
+            for (const [key, percent] of evidence.entries()) {
+                const distance = Math.abs(key - segment.start);
+
+                if (!nearest || distance < nearest.distance) {
+                    nearest = { distance, percent };
+                }
+            }
+
+            return Boolean(
+                nearest
+                && nearest.distance <= ROAD_TOLERANCE_SECONDS
+                && nearest.percent >= ROAD_MIN_PERCENT,
+            );
+        })
         .sort((a, b) => a.start - b.start);
 }
 
 
-function nearbySpeech(segments, timestamp) {
-    const from = timestamp - SPEECH_WINDOW_SECONDS;
-    const to = timestamp + SPEECH_WINDOW_SECONDS;
+function nearestRoad(segments, timestamp) {
+    let best = null;
 
-    return segments.filter(
-        (segment) => segment.end >= from && segment.start <= to,
-    );
+    for (const segment of segments) {
+        const distance = Math.abs(segment.start - timestamp);
+
+        if (!best || distance < best.distance) {
+            best = { segment, distance };
+        }
+    }
+
+    return best && best.distance <= ROAD_TOLERANCE_SECONDS ? best.segment : null;
 }
 
 
-function speechDistance(segment, timestamp) {
-    if (timestamp < segment.start) {
-        return segment.start - timestamp;
+function objectSummary(frames) {
+    const collected = new Map();
+
+    for (const frame of frames) {
+        const seen = new Set();
+
+        for (const item of frame.objects || []) {
+            const label = item.label_ru || item.label;
+
+            if (!label || seen.has(label)) {
+                continue;
+            }
+
+            seen.add(label);
+
+            const entry = collected.get(label) || {
+                label,
+                count: 0,
+                area: 0,
+            };
+
+            entry.count += 1;
+            entry.area = Math.max(entry.area, Number(item.area_percent || 0));
+            collected.set(label, entry);
+        }
     }
 
-    if (timestamp > segment.end) {
-        return timestamp - segment.end;
-    }
-
-    return 0;
+    return [...collected.values()]
+        .sort((a, b) => b.count - a.count || b.area - a.area)
+        .slice(0, 6);
 }
 
 
-function closestSpeech(segments, timestamp) {
-    return [...segments]
-        .sort(
-            (a, b) => (
-                speechDistance(a, timestamp)
-                - speechDistance(b, timestamp)
-            ),
-        )
-        .slice(0, SPEECH_LIMIT)
-        .sort((a, b) => a.start - b.start);
+function visualFor(frames) {
+    const parts = [];
+    const first = frames.find((frame) => frame.descriptors?.lighting);
+    const weather = frames.find((frame) => frame.descriptors?.weather);
+    const season = frames.find((frame) => frame.descriptors?.season);
+
+    if (first?.descriptors?.lighting) {
+        parts.push(first.descriptors.lighting);
+    }
+
+    if (weather?.descriptors?.weather) {
+        parts.push(weather.descriptors.weather);
+    }
+
+    if (season?.descriptors?.season) {
+        parts.push(season.descriptors.season);
+    }
+
+    return parts.join(" · ");
 }
 
 
-function sceneFor(intervals, timestamp) {
-    if (!Array.isArray(intervals) || !intervals.length) {
-        return null;
-    }
-
-    let index = intervals.findIndex(
-        (interval) => timestamp >= interval[0] && timestamp < interval[1],
-    );
-
-    if (index === -1) {
-        index = intervals.length - 1;
-    }
+function paginate(items, page, size) {
+    const pages = Math.max(1, Math.ceil(items.length / size));
+    const current = Math.min(Math.max(1, page), pages);
 
     return {
-        number: index + 1,
-        start: intervals[index][0],
-        end: intervals[index][1],
+        pages,
+        items: items.slice((current - 1) * size, current * size),
     };
 }
 
 
-function cleanRoadText(text) {
-    return String(text || "")
-        .replace(/^Дорога:\s*/i, "")
-        .trim();
-}
+function Pager({ page, pages, onChange, label }) {
+    if (pages <= 1) {
+        return null;
+    }
 
+    return (
+        <div className="kf-pager">
+            <button
+                className="kf-pager-button"
+                disabled={page <= 1}
+                onClick={() => onChange(page - 1)}
+            >
+                ←
+            </button>
 
-function formatPercent(value) {
-    const number = Number(value);
+            <span className="muted">
+                {label}: {page} / {pages}
+            </span>
 
-    return Number.isFinite(number) ? `${number}%` : "";
+            <button
+                className="kf-pager-button"
+                disabled={page >= pages}
+                onClick={() => onChange(page + 1)}
+            >
+                →
+            </button>
+        </div>
+    );
 }
 
 
 export default function KeyFramesPanel({ job, onSeek }) {
-    const frames = buildFrames(job);
+    const frames = useMemo(() => collectFrames(job), [job]);
+    const intervals = useMemo(() => sceneIntervals(job), [job]);
+    const groups = useMemo(() => groupFrames(frames, intervals), [frames, intervals]);
+    const roads = useMemo(() => roadSegments(job), [job]);
+
+    const [groupPage, setGroupPage] = useState(1);
+    const [framePage, setFramePage] = useState(1);
+    const [selected, setSelected] = useState(1);
+
+    useEffect(() => {
+        setGroupPage(1);
+        setFramePage(1);
+        setSelected(1);
+    }, [job?.id]);
+
+    const groupsPage = paginate(groups, groupPage, GROUPS_PER_PAGE);
+    const group = groups.find((item) => item.number === selected) || groups[0];
+
+    const framesPage = paginate(group?.frames || [], framePage, FRAMES_PER_PAGE);
+
+    useEffect(() => {
+        setFramePage(1);
+    }, [selected, groupPage]);
+
+    useEffect(() => {
+        setGroupPage(Math.max(1, Math.ceil(selected / GROUPS_PER_PAGE)));
+    }, [selected]);
 
     if (!frames.length) {
         return null;
     }
 
-    const ocr = ocrObservations(job);
-    const roads = roadSegments(job);
-    const speech = speechSegments(job);
-
-    const intervals = job?.stages?.scenes?.result?.intervals || [];
-
-    const hasSpeech = speech.length > 0;
+    const summaryObjects = objectSummary(group?.frames || []);
+    const visual = visualFor(group?.frames || []);
+    const groupRoads = (group?.frames || [])
+        .map((frame) => nearestRoad(roads, frame.timestamp))
+        .filter(Boolean);
+    const roadLabels = [...new Set(groupRoads.map((item) => item.curve_label || item.direction).filter(Boolean))];
 
     return (
         <section className="panel keyframes-panel">
             <div className="section-row">
                 <div>
-                    <h2>Ключевые кадры</h2>
+                    <h2>Ключевые кадры по локациям</h2>
                     <p className="muted">
-                        Один сводный вывод на кадр: объекты, визуальный профиль,
-                        дорога, текст на кадре и речь в пределах
-                        {" "}
-                        ±{SPEECH_WINDOW_SECONDS}
-                        {" "}
-                        секунд. Нажмите на кадр или время, чтобы перейти к нему.
+                        Кадры объединены по сценам и непрерывным участкам.
+                        Внутри локации — компактная лента; откройте нужную
+                        группу и пролистайте кадры.
                     </p>
                 </div>
-                <span className="landmarks-total">
-                    {frames.length} кадр.
-                    {hasSpeech ? ` · речь ±${SPEECH_WINDOW_SECONDS} с` : ""}
+
+                <span className="kf-total">
+                    {frames.length} кадр. · {groups.length} локац.
                 </span>
             </div>
 
-            <div className="keyframe-list">
-                {frames.map((frame, index) => {
-                    const objects = [...(frame.objects || [])].sort(
-                        (a, b) => (
-                            Number(b.area_percent || 0)
-                            - Number(a.area_percent || 0)
-                        ),
-                    );
+            <div className="kf-group-bar">
+                <Pager
+                    page={groupPage}
+                    pages={groupsPage.pages}
+                    onChange={setGroupPage}
+                    label="Локации"
+                />
 
-                    const scene = sceneFor(intervals, frame.timestamp);
+                <div className="kf-group-chips">
+                    {groupsPage.items.map((item) => (
+                        <button
+                            className={`kf-group-chip${item.number === group?.number ? " is-active" : ""}`}
+                            key={`${item.key}-${item.number}`}
+                            onClick={() => setSelected(item.number)}
+                            title={`${formatTime(item.start)} – ${formatTime(item.end)}`}
+                        >
+                            <strong>Локация {item.number}</strong>
+                            <span>
+                                {formatTime(item.start)}
+                                {" · "}
+                                {item.frames.length} кадр.
+                            </span>
+                        </button>
+                    ))}
+                </div>
+            </div>
 
-                    const road = nearest(roads, frame.timestamp);
+            {group && (
+                <div className="kf-detail">
+                    <div className="kf-detail-head">
+                        <div>
+                            <h3>
+                                Локация {group.number} · {formatTime(group.start)}
+                                {group.end > group.start ? ` – ${formatTime(group.end)}` : ""}
+                            </h3>
 
-                    const texts = ocr
-                        .filter((item) => (
-                            item.frame_artifact === frame.artifact
-                            || Math.abs(item.start - frame.timestamp)
-                            <= MATCH_TOLERANCE_SECONDS
-                        ))
-                        .map((item) => item.corrected_text ?? item.text)
-                        .filter(Boolean);
+                            <p className="muted">
+                                {group.frames.length} кадр.
+                                {group.sceneNumbers.length
+                                    ? ` · сцена ${group.sceneNumbers.join(", ")}`
+                                    : ""}
+                            </p>
+                        </div>
 
-                    const uniqueTexts = [...new Set(texts)];
+                        <Pager
+                            page={selected}
+                            pages={groups.length}
+                            onChange={setSelected}
+                            label="Локация"
+                        />
+                    </div>
 
-                    const nearby = nearbySpeech(speech, frame.timestamp);
+                    <div className="kf-summary">
+                        {summaryObjects.length > 0 && (
+                            <p>
+                                <span className="kf-label">Видно:</span>{" "}
+                                {summaryObjects
+                                    .map((item) => `${item.label} (${item.count})`)
+                                    .join(", ")}
+                            </p>
+                        )}
 
-                    const shownSpeech = closestSpeech(
-                        nearby,
-                        frame.timestamp,
-                    );
+                        {visual && (
+                            <p>
+                                <span className="kf-label">Кадр:</span> {visual}
+                            </p>
+                        )}
 
-                    const descriptors = frame.descriptors || {};
+                        {roadLabels.length > 0 && (
+                            <p>
+                                <span className="kf-label">Дорога:</span>{" "}
+                                {roadLabels.join(", ")}
+                            </p>
+                        )}
+                    </div>
 
-                    const landscape = Array.isArray(descriptors.landscape)
-                        ? descriptors.landscape.join(", ")
-                        : "";
+                    <div className="kf-frame-grid">
+                        {framesPage.items.map((frame) => {
+                            const road = nearestRoad(roads, frame.timestamp);
+                            const objects = (frame.objects || [])
+                                .slice()
+                                .sort((a, b) => Number(b.area_percent || 0) - Number(a.area_percent || 0))
+                                .slice(0, 3)
+                                .map((item) => item.label_ru || item.label)
+                                .filter(Boolean);
 
-                    const metrics = frame.metrics || {};
-
-                    return (
-                        <article className="keyframe-card" key={frame.timestamp}>
-                            {frame.artifact && (
+                            return (
                                 <button
-                                    className="keyframe-thumb"
+                                    className="kf-frame"
+                                    key={frame.timestamp}
                                     onClick={() => onSeek(frame.timestamp)}
-                                    title="Перейти к кадру"
+                                    title={
+                                        objects.length
+                                            ? `${formatTime(frame.timestamp)} · ${objects.join(", ")}`
+                                            : formatTime(frame.timestamp)
+                                    }
                                 >
                                     <img
                                         src={fileUrl(job.id, frame.artifact)}
                                         alt={`Кадр ${formatTime(frame.timestamp)}`}
                                         loading="lazy"
                                     />
-                                    <span className="keyframe-time">
+
+                                    <span className="kf-frame-time">
                                         {formatTime(frame.timestamp)}
                                     </span>
-                                </button>
-                            )}
 
-                            <div className="keyframe-body">
-                                <header className="keyframe-head">
-                                    <strong>Кадр {index + 1}</strong>
-
-                                    {scene && (
-                                        <span className="keyframe-scene">
-                                            Сцена {scene.number}
-                                            {" · "}
-                                            {formatTime(scene.start)}
-                                            –
-                                            {formatTime(scene.end)}
+                                    {road && (
+                                        <span className="kf-frame-road">
+                                            {road.curve_label || road.direction}
                                         </span>
                                     )}
-                                </header>
+                                </button>
+                            );
+                        })}
+                    </div>
 
-                                <div className="keyframe-row">
-                                    <span className="keyframe-label">Объекты</span>
-
-                                    {objects.length ? (
-                                        <div className="keyframe-chips">
-                                            {objects.slice(0, 6).map((item, itemIndex) => (
-                                                <span
-                                                    className="keyframe-chip"
-                                                    key={`${item.label}-${itemIndex}`}
-                                                    title={Number.isFinite(Number(item.confidence))
-                                                        ? `Уверенность ${Math.round(Number(item.confidence) * 100)}%`
-                                                        : undefined}
-                                                >
-                                                    {item.label_ru || item.label}
-                                                    {formatPercent(item.area_percent)
-                                                        ? ` · ${formatPercent(item.area_percent)}`
-                                                        : ""}
-                                                </span>
-                                            ))}
-
-                                            {objects.length > 6 && (
-                                                <span className="muted">
-                                                    +{objects.length - 6}
-                                                </span>
-                                            )}
-                                        </div>
-                                    ) : (
-                                        <span className="muted">не найдены</span>
-                                    )}
-                                </div>
-
-                                {(descriptors.lighting
-                                    || descriptors.weather
-                                    || descriptors.season
-                                    || landscape
-                                    || Number.isFinite(Number(metrics.brightness))) && (
-                                    <div className="keyframe-row">
-                                        <span className="keyframe-label">Место</span>
-
-                                        <div className="keyframe-text">
-                                            {(descriptors.lighting
-                                                || descriptors.weather
-                                                || descriptors.season) && (
-                                                <p>
-                                                    {[
-                                                        descriptors.lighting,
-                                                        descriptors.weather,
-                                                        descriptors.season,
-                                                    ].filter(Boolean).join(" · ")}
-                                                </p>
-                                            )}
-
-                                            {landscape && (
-                                                <p className="muted">
-                                                    {landscape}
-                                                </p>
-                                            )}
-
-                                            {Number.isFinite(Number(metrics.brightness)) && (
-                                                <p className="keyframe-metrics">
-                                                    яркость {Math.round(Number(metrics.brightness))}
-                                                    {" · "}
-                                                    контраст {Math.round(Number(metrics.contrast))}
-                                                    {" · "}
-                                                    насыщенность {Math.round(Number(metrics.saturation))}
-                                                </p>
-                                            )}
-                                        </div>
-                                    </div>
-                                )}
-
-                                <div className="keyframe-row">
-                                    <span className="keyframe-label">Дорога</span>
-
-                                    {road ? (
-                                        <div className="keyframe-text">
-                                            <p>{cleanRoadText(road.text)}</p>
-
-                                            {(road.semantic_road_percent != null
-                                                || road.confidence != null) && (
-                                                <p className="keyframe-metrics">
-                                                    {road.semantic_road_percent != null
-                                                        ? `маска дороги ${road.semantic_road_percent}%`
-                                                        : ""}
-                                                    {road.semantic_road_percent != null
-                                                        && road.confidence != null
-                                                        ? " · "
-                                                        : ""}
-                                                    {road.confidence != null
-                                                        ? `уверенность ${Math.round(Number(road.confidence) * 100)}%`
-                                                        : ""}
-                                                </p>
-                                            )}
-                                        </div>
-                                    ) : (
-                                        <span className="muted">признаков не найдено</span>
-                                    )}
-                                </div>
-
-                                {uniqueTexts.length > 0 && (
-                                    <div className="keyframe-row">
-                                        <span className="keyframe-label">Текст</span>
-
-                                        <div className="keyframe-chips">
-                                            {uniqueTexts.slice(0, 3).map((text) => (
-                                                <span className="keyframe-chip" key={text}>
-                                                    «{text}»
-                                                </span>
-                                            ))}
-
-                                            {uniqueTexts.length > 3 && (
-                                                <span className="muted">
-                                                    +{uniqueTexts.length - 3}
-                                                </span>
-                                            )}
-                                        </div>
-                                    </div>
-                                )}
-
-                                {hasSpeech && (
-                                    <div className="keyframe-row keyframe-row-speech">
-                                        <span className="keyframe-label">Речь рядом</span>
-
-                                        {nearby.length ? (
-                                            <div className="keyframe-speech">
-                                                {shownSpeech.map(
-                                                    (segment, segmentIndex) => (
-                                                        <button
-                                                            className="keyframe-speech-row"
-                                                            key={`${segment.start}-${segmentIndex}`}
-                                                            onClick={() => onSeek(segment.start)}
-                                                        >
-                                                            <span className="keyframe-speech-time">
-                                                                {formatTime(segment.start)}
-                                                            </span>
-                                                            <span>{segment.text}</span>
-                                                        </button>
-                                                    ),
-                                                )}
-
-                                                {nearby.length > shownSpeech.length && (
-                                                    <span className="muted">
-                                                        +{nearby.length - shownSpeech.length} реплик
-                                                    </span>
-                                                )}
-                                            </div>
-                                        ) : (
-                                            <span className="muted">
-                                                реплик в окрестности нет
-                                            </span>
-                                        )}
-                                    </div>
-                                )}
-                            </div>
-                        </article>
-                    );
-                })}
-            </div>
+                    <Pager
+                        page={framesPage.pages === 0 ? 1 : framePage}
+                        pages={framesPage.pages}
+                        onChange={setFramePage}
+                        label="Кадры"
+                    />
+                </div>
+            )}
         </section>
     );
 }
