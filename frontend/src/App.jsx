@@ -6,6 +6,7 @@ import StageGrid from "./components/StageGrid.jsx";
 import VideoWorkspace from "./components/VideoWorkspace.jsx";
 import FindingsPanel from "./components/FindingsPanel.jsx";
 import LocationDossier from "./components/LocationDossier.jsx";
+import MapQueryPanel from "./components/mapQueryPanel/MapQueryPanel.jsx";
 import LandmarksPanel from "./components/LandmarksPanel.jsx";
 import KeyFramesPanel from "./components/keyFrames/KeyFramesPanel.jsx";
 import SummaryPanel from "./components/SummaryPanel.jsx";
@@ -345,6 +346,8 @@ export default function App() {
 
 
                     <LocationDossier job={job} />
+
+                    <MapQueryPanel job={job} onSeek={seek} />
 
 
                     <LandmarksPanel

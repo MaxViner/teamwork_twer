@@ -4,7 +4,11 @@ import math
 import re
 from urllib.parse import quote
 
-from app.geo import extract_text_evidence
+from app.services.geoInspectService.geo import extract_text_evidence
+from app.services.geoInspectService.geo_scene import build_geo_scenes
+from app.services.geoInspectService.geo_visual import verify_scene_visuals
+from app.jobs import job_folder
+from app.services.mapService.map_query import generate_map_queries
 
 
 ARCHIVE = re.compile(
@@ -322,6 +326,24 @@ def _portable(value):
     return value
 
 
+def _geo_payload(job):
+    """Read reviewed stages once per export; do not cache edited observations."""
+    stages = _dict(job.get("stages"))
+    geo = build_geo_scenes(stages)
+    job_id = job.get("id")
+    if not job_id:
+        return geo
+    try:
+        folder = job_folder(str(job_id))
+        geo["visual_verification"] = verify_scene_visuals(folder, stages, geo)
+    except (OSError, ValueError):
+        # No claim is visually verified on infrastructure error.
+        geo["visual_verification"] = {"scenes": [], "metric_mask_ready": False,
+                                      "note": "Кадры не удалось прочитать; визуальная проверка недоступна."}
+    geo["map_queries"] = generate_map_queries(geo)
+    return geo
+
+
 def render_evidence_json(job):
     """
     Компактный версионированный JSON с уликами.
@@ -414,6 +436,7 @@ def render_evidence_json(job):
                 "и OCR находятся среди текстовых улик."
             ),
         },
+        "geo_scene": _geo_payload(job),
         "text_clues": clues,
         "road": {
             "episodes": roads,
@@ -494,180 +517,162 @@ def render_evidence_json(job):
     return evidence
 
 
+# Основной Markdown — только геопоиск. Конспект, вопросы, лица и полная
+# расшифровка доступны в интерфейсе и других экспортах, но не засоряют его.
+_CLAIM_NAMES = {
+    "region": "Регион, названный автором",
+    "settlement": "Бывший населённый пункт / число домов",
+    "manor": "Усадьба (упоминание в речи или OCR)",
+    "church": "Церковь (упоминание в речи или OCR)",
+    "river": "Река / ручей (упоминание)",
+    "road": "Дорога (упоминание)",
+    "historic_map": "Историческая карта (упоминание)",
+}
+
+
+def _geo_claim_line(claim):
+    subject = _CLAIM_NAMES.get(claim.get("subject"), "Зацепка")
+    value = claim.get("value")
+    predicate = claim.get("predicate")
+    if predicate == "house_count_on_old_map_mentioned":
+        subject = "На старой карте, по словам автора, домов/дворов"
+    if predicate == "near_according_to_speaker":
+        subject, value = "По словам автора: усадьба рядом с церковью", ""
+    if predicate == "possibly_near_according_to_speaker":
+        subject, value = "Предположение автора: усадьба рядом с церковью", ""
+    if predicate == "co_mentioned_in_utterance":
+        subject, value = "Усадьба и церковь названы в одной реплике; расстояние неизвестно", ""
+    if predicate == "house_count_mentioned":
+        subject = "По словам автора, домов/дворов (связь с картой не установлена)"
+    readable = {
+        "abandoned_or_former_village": "бывшая или заброшенная деревня",
+        "manor_estate": "усадьба",
+        "church_or_church_site": "церковь или церковное место",
+        "river_or_stream": "река или ручей",
+        "road": "дорога",
+        "old_map": "историческая карта",
+    }
+    detail = _md(readable.get(value, value)) if isinstance(value, str) else str(value or "")
+    return f"{subject}: {detail}".rstrip(": ")
+
+
+def _geo_clue(claim, job_id):
+    support = _rows(claim.get("support"))
+    if not support:
+        return []
+    chosen = support[0]
+    source = "речь" if chosen.get("source") == "speech" else "OCR"
+    when = _time(chosen.get("start"))
+    quote = _md(chosen.get("quote"))[:350]
+    status = "подтверждённая пользователем запись" if chosen.get("review") == "accepted" else "распознавание требует проверки"
+    align = " · таймкод правки неизвестен" if chosen.get("alignment") else ""
+    return [f"- **{_geo_claim_line(claim)}** — {when} · {source} · {status}{align}.",
+            f"  Цитата: «{quote}»." + (f" Ещё упоминаний: {claim['support_count'] - 1}."
+                                       if claim.get("support_count", 0) > 1 else "")]
+
+
 def render_report(job):
-    """Build a fresh Markdown brief from the current completed stages."""
-    job_id = job.get("id")
+    """Короткий географический бриф из текущих ручных правок и этапов.
+
+    Совпадение временных окон, типов объектов и классов модели не является
+    доказательством одной локации или наличия объекта на конкретном кадре.
+    """
+    job = _dict(job)
     stages = _dict(job.get("stages"))
-    lines = ["# Геопоиск: зацепки из видео", "", f"**Видео:** {_md(job.get('name')) or 'без названия'}",
-             "", "Координаты камеры не подтверждены. Ниже — наблюдения из файла и направления проверки; внешние источники сервис не проверял.", ""]
-    preparation = _dict(_stage(stages, "prepare").get("result"))
+    job_id = job.get("id")
+    geo = _geo_payload(job)
+    visual_by_id = {item.get("scene_id"): item for item in
+                    _rows(_dict(geo.get("visual_verification")).get("scenes"))}
+    by_id = {claim["id"]: claim for claim in geo["claims"]}
+    duration = _dict(_stage(stages, "prepare").get("result")).get("duration")
+    lines = ["# Геопоиск: проверяемые улики", "",
+             f"**Видео:** {_md(job.get('name')) or 'без названия'}"
+             + (f" · {_time(duration)}" if duration is not None else ""), "",
+             "**Координаты камеры не определены.** Речь — утверждения автора, а не проверенные сведения о местности. Внешние источники не запрашивались.", ""]
+    region_claims = [claim for claim in geo["claims"] if claim.get("subject") == "region"]
+    if region_claims:
+        lines += ["## Регион, указанный в видео", ""]
+        for claim in region_claims[:2]:
+            lines.extend(_geo_clue(claim, job_id))
+        lines.append("")
+    lines += ["## Геосцены для проверки", ""]
+    if not geo["scenes"]:
+        lines += ["Нет локализованных по времени утверждений о месте. Координаты вывести нельзя.", ""]
+    for scene in geo["scenes"][:8]:
+        lines += [f"### {scene['id']}: {_time(scene['start'])}–{_time(scene['end'])}", "",
+                  "Временное окно реплик, **не** доказательство единой точки съёмки.", ""]
+        claims = [by_id[key] for key in scene["claim_ids"] if key in by_id]
+        # Отношения и карта важнее разрозненных упоминаний.
+        priority = {"near_according_to_speaker": 0,
+                    "possibly_near_according_to_speaker": 0,
+                    "co_mentioned_in_utterance": 1,
+                    "house_count_on_old_map_mentioned": 1,
+                    "described_as": 2}
+        claims.sort(key=lambda c: priority.get(c["predicate"], 3))
+        for claim in claims[:6]:
+            lines.extend(_geo_clue(claim, job_id))
+        if len(claims) > 6:
+            lines.append(f"- Ещё связанных утверждений: {len(claims) - 6}; полный перечень — в evidence.json.")
+        lines.append("")
+        refs = _rows(scene.get("frame_candidates"))[:3]
+        if refs:
+            links = []
+            for ref in refs:
+                link = _artifact(job_id, ref.get("artifact"), "кадр")
+                links.append(f"{_time(ref.get('timestamp'))} {link}" if link else _time(ref.get("timestamp")))
+            lines += ["Кадры рядом с репликой (содержание **не подтверждено**): " + "; ".join(links) + ".", ""]
+        visual = visual_by_id.get(scene["id"], {})
+        candidates = _rows(visual.get("candidates"))
+        pairs = _rows(visual.get("possible_shared_facades"))
+        if candidates:
+            labels = {"building": "здание", "house": "дом", "church": "церковь",
+                      "temple": "храм"}
+            samples = []
+            for item in candidates[:3]:
+                link = _artifact(job_id, item.get("artifact"), "кадр")
+                samples.append(f"{labels.get(item.get('label'), 'здание')} {_time(item.get('timestamp'))}"
+                               + (f" {link}" if link else ""))
+            lines.append("Модель отметила кандидатов (не опознание): " + "; ".join(samples) + ".")
+        if pairs:
+            pair = pairs[0]
+            first, second = _dict(pair.get("first")), _dict(pair.get("second"))
+            lines.append("Сходство фрагментов фасада для ручной сверки: "
+                         + f"{_time(first.get('timestamp'))} ↔ {_time(second.get('timestamp'))}; "
+                         + "совпадение по признакам не удостоверяет, что это одна усадьба.")
+        mask = _dict(scene.get("map_query_mask"))
+        entities = [item["entity"] for item in _rows(mask.get("candidate_features"))
+                    if item.get("entity") and item.get("entity") != "region"]
+        relations = _rows(mask.get("relations"))
+        if entities:
+            lines.append("Проверять в картографических и краеведческих источниках: "
+                         + _md(", ".join(entities)) + ".")
+        if any(item.get("predicate") == "near_claimed" for item in relations):
+            lines.append("Сверить усадьбу и церковь по независимым картам/описям; установить расстояние и затем сравнить фасад с кадрами.")
+        elif any(item.get("predicate") == "co_mentioned_only" for item in relations):
+            lines.append("Проверить, находятся ли названные усадьба и церковь рядом: речь этого **не устанавливает**.")
+        if any(item.get("entity") == "historical_house_count"
+               for item in _rows(mask.get("candidate_features"))):
+            lines.append("Сверить число дворов на конкретной датированной карте; современное число построек не заменяет историческое.")
+        lines.append("")
+    unlocated = [by_id[key] for key in geo["unlocated_claim_ids"] if key in by_id]
+    if unlocated:
+        lines += ["## Ручные правки без привязки к моменту", ""]
+        for claim in unlocated[:3]:
+            lines.extend(_geo_clue(claim, job_id))
+        lines.append("")
     metadata = _stage(stages, "metadata")
-    meta_result = _dict(metadata.get("result"))
-    metadata_observations = _rows(metadata.get("observations"))
     rejected_gps = any(item.get("review") == "rejected"
                        and _dict(item.get("data")).get("kind") == "gps_coordinates"
-                       for item in metadata_observations)
-    gps = list(dict.fromkeys(filter(None, map(_coordinates, _rows(meta_result.get("gps")))))) if not rejected_gps else []
-    if preparation.get("duration") is not None:
-        lines += [f"**Длительность:** {_time(preparation['duration'])}", ""]
-    lines += ["## 1. Координаты из метаданных", ""]
+                       for item in _rows(metadata.get("observations")))
+    gps = [] if rejected_gps else [v for item in _rows(_dict(metadata.get("result")).get("gps"))
+                                if (v := _coordinates(item))]
     if gps:
-        lines += [f"- `{point}` — GPS-тег файла, без привязки к кадру." for point in gps[:6]]
-        if len(gps) > 6:
-            lines.append(f"- Ещё записей: {len(gps) - 6}; см. JSON задания.")
-        lines += ["", "Сверить точку с видимыми объектами и ракурсом. Тег может относиться к файлу или устройству, а не ко всем сценам."]
-    else:
-        lines.append("Нет доступных координат из метаданных, пригодных для этой сводки.")
-    if meta_result.get("created_at") and metadata:
-        lines += ["", f"Дата в метаданных: {_md(meta_result['created_at'])} (не подтверждённая дата съёмки)."]
-    lines += ["", "## 2. Что сказано и что написано", ""]
-    clues = _text_clues(stages)
-    quota = {"archive": 3, "landmark": 3, "coordinates": 3, "address": 4,
-             "place_mention": 4, "transport": 2, "link": 2}
-    chosen = []
-    for item in clues:
-        kind = item["kind"]
-        if quota[kind] and len(chosen) < 14:
-            quota[kind] -= 1
-            chosen.append(item)
-    for index, item in enumerate(chosen, 1):
-        kind = item["kind"]
-        check = "пользователь подтвердил наблюдение" if item.get("review") == "accepted" else "проверить распознавание"
-        if item.get("edited"):
-            check += ", текст исправлен"
-        lines += [f"### Т{index:02d}. {TYPES[kind]}: {_md(item['label'])}", "",
-                  f"- Опора: {_interval(item)} · {LABELS[item['source']]} · {check}.",
-                  f"- Фрагмент: «{_md(item['excerpt'])}».",
-                  f"- Где и как проверять: {ROUTES[kind]}"]
-        if kind == "archive":
-            for when, text in item.get("context", []):
-                if text:
-                    lines.append(f"- Соседняя реплика ({when}): «{_md(text)}».")
-        if kind == "landmark" and re.search(r"разводн\w*\s+мост", item["label"], re.I):
-            lines.append("- Для сверки моста: число и форма пролётов, расположение подвижного пролёта, конструкция опор и застройка берегов.")
-        links = _links(job_id, item)
-        if links:
-            lines.append(f"- Материал: {links}.")
+        lines += ["## GPS-теги файла (не координаты всех сцен)", ""]
+        lines += [f"- `{point}`" for point in dict.fromkeys(gps[:3])]
         lines.append("")
-    if not chosen:
-        lines += ["Адресных, архивных и других конкретных текстовых зацепок не найдено или этапы недоступны.", ""]
-    elif len(clues) > len(chosen):
-        lines += [f"В сводку не вошло ещё {len(clues) - len(chosen)} текстовых зацепок после удаления дублей; исходные наблюдения доступны в JSON.", ""]
-    lines += ["## 3. Конспект и структура", ""]
-    summary = _summary(stages)
-    structure = _structure(stages)
-    if summary:
-        if summary.get("overview"):
-            lines += [f"- Кратко: {_md(summary['overview'])}"]
-        topics = _rows(summary.get("topics"))
-        if topics:
-            lines.append(
-                "- Темы: " + ", ".join(
-                    _md(item.get("word"))
-                    for item in topics[:8]
-                    if item.get("word")
-                ) + "."
-            )
-        for label, key in (("Тезис", "theses"), ("Вывод", "conclusions")):
-            for item in _rows(summary.get(key))[:4]:
-                text = _clean(item.get("text"))
-                if text:
-                    lines.append(
-                        f"- {label} ({_time(item.get('start'))}): «{_md(text)}»."
-                    )
-        lines.append("")
-    if structure:
-        lines += ["**Смысловые разделы:**", ""]
-        for section in structure[:10]:
-            title = _md(section.get("title")) or "Раздел"
-            text = _clean(section.get("summary"))
-            keywords = ", ".join(section.get("keywords") or [])
-            detail = " ".join(filter(None, (
-                f"«{_md(text)}»." if text else "",
-                f"Ключевые слова: {_md(keywords)}." if keywords else "",
-            )))
-            lines.append(
-                f"- {_interval(section)} — {title}. {detail}".rstrip()
-            )
-        if len(structure) > 10:
-            lines.append(f"- Ещё разделов: {len(structure) - 10}.")
-        lines.append("")
-    if not summary and not structure:
-        lines += ["Конспект и структура недоступны: нет завершённой расшифровки или надписей.", ""]
-    lines += ["## 4. Дорога и ориентиры для визуальной сверки", ""]
-    roads = _roads(stages)
-    bend_names = {"left": "влево", "right": "вправо", "straight": "прямо",
-                  "uncertain": "неоднозначно"}
-    for index, episode in enumerate(roads[:5], 1):
-        lines += [f"### Д{index:02d}. {_interval(episode)} — {_md(episode.get('bend_label')) or 'изгиб не установлен'}", ""]
-        source = "кадр из прежней версии анализа" if episode.get("legacy") else f"кадров с дорожными признаками: {_md(episode.get('frame_count')) or 'нет данных'}"
-        lines.append(f"- Опора: {source}.")
-        counts = _dict(episode.get("bend_counts"))
-        breakdown = [f"{label}: {counts[code]}" for code, label in bend_names.items()
-                     if isinstance(counts.get(code), int) and counts[code] > 0]
-        if breakdown:
-            lines.append(f"- Видимые изгибы по кадрам: {'; '.join(breakdown)}.")
-        refs = _rows(episode.get("reference_frames"))
-        first_refs = refs if len(refs) <= 4 else [*refs[:3], refs[-1]]
-        if first_refs:
-            labels = [" ".join(filter(None, (_time(ref.get("timestamp")), _artifact(job_id, ref.get("artifact"), "кадр")))) for ref in first_refs]
-            lines.append(f"- Опорные кадры: {'; '.join(labels)}.")
-        for clue in _rows(episode.get("context_clues"))[:3]:
-            side = SIDES.get(clue.get("image_side"), "положение не установлено")
-            link = _artifact(job_id, clue.get("artifact"), "кадр")
-            lines.append(f"- Возможный ориентир: {_md(clue.get('label_ru') or clue.get('label'))}, {side}, {_time(clue.get('timestamp'))}{(' · ' + link) if link else ''}.")
-        lines.append("")
-    if roads:
-        lines += ["Сравнить последовательность видимых изгибов и положение ориентиров на снимках, панорамах, картах или старых планах. Стороны указаны относительно изображения. Физические примыкания, масштаб и совпадение дорог между ракурсами не установлены.", ""]
-        if len(roads) > 5:
-            lines += [f"Ещё дорожных записей: {len(roads) - 5}; подробности — в панели кадров и в JSON.", ""]
-    image_clues = _visual(stages)
-    if image_clues:
-        lines += ["**Отдельные визуальные кандидаты** (метки модели, не идентификация):", ""]
-        for _, frame, obj in image_clues[:5]:
-            link = _artifact(job_id, frame.get("artifact"), "кадр")
-            lines.append(f"- {_md(obj.get('label_ru') or obj.get('label'))} · {_time(frame.get('timestamp'))}{(' · ' + link) if link else ''}.")
-        if any(obj.get("label") == "bridge" for _, _, obj in image_clues[:5]):
-            lines += ["", "Для моста сверить число и форму пролётов, опоры и береговую застройку по фотографиям. Если мост опознан, отдельно проверить точку наблюдения и направление камеры."]
-        lines.append("")
-    elif not roads:
-        lines += ["Нет визуальных зацепок выбранных типов из завершённых этапов. Это не означает, что объектов нет в видео.", ""]
-    lines += ["## 5. Люди в кадре", ""]
-    faces = _faces(stages)
-    if faces:
-        lines.append(
-            f"- Обнаружено лиц: {faces.get('face_count') or 0} "
-            f"в {faces.get('frame_count') or 0} кадрах; разных людей по внешности: {len(faces['people'])}."
-        )
-        for person in faces["people"][:8]:
-            when = _time(person.get("first_start"))
-            lines.append(
-                f"- {_md(person.get('label'))}: {person.get('frame_count')} кадр., с {when}."
-            )
-        if len(faces["people"]) > 8:
-            lines.append(f"- Ещё людей: {len(faces['people']) - 8}.")
-        lines += ["", "Метки «Человек N» анонимны: это разные лица внутри видео, а не установленная личность. Совпадение лиц между кадрами приблизительное.", ""]
-    else:
-        lines += ["Лица не обнаружены или этап недоступен. Это не значит, что людей в видео нет.", ""]
-    questions = _questions(stages)
-    if questions:
-        lines += ["## 6. Вопросы для самопроверки", ""]
-        for index, item in enumerate(questions[:8], 1):
-            answer = _clean(item.get("answer"))
-            lines.append(
-                f"{index}. {_md(item.get('question'))} "
-                f"({_time(item.get('time_seconds'))})"
-                + (f" — ответ: «{_md(answer)}»." if answer else "")
-            )
-        if len(questions) > 8:
-            lines.append(f"Ещё вопросов: {len(questions) - 8}.")
-        lines.append("")
-    unavailable = [label for key, label in (("metadata", "метаданные"), ("ocr", "текст на экране"),
-                   ("speech", "речь"), ("road_geometry", "дорога"), ("scene_objects", "объекты"))
-                   if not _stage(stages, key)]
-    lines += ["## 7. Ограничения и материалы", ""]
-    if unavailable:
-        lines.append(f"- Нет завершённого результата: {', '.join(unavailable)}.")
-    lines += ["- Наблюдение и совпадение — разные вещи. Для вывода о месте требуются независимые признаки и сверка ракурса.",
-              "- Ссылки на кадры работают через API запущенного сервиса; Markdown сам не содержит изображения. Полные результаты, расшифровка и технические поля остаются в JSON задания."]
+    lines += ["## Что пока не доказано", "",
+              "- Координаты, название населённого пункта, расстояние и ориентация объектов на карте.",
+              "- Что церковь видна на кадрах, что здание однозначно является именно названной усадьбой или что кадры из разных сцен сняты в одном месте.",
+              "- Историческая карта, её дата, число дворов и совпадение фасада с внешней фотографией.", "",
+              "Подробные утверждения и опорные данные: `evidence.json`. Полная расшифровка, конспект, вопросы и лица доступны отдельно и не входят в геобриф. Ссылки на кадры требуют работающего сервиса."]
     return "\n".join(lines).rstrip() + "\n"

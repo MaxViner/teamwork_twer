@@ -10,8 +10,8 @@ from pathlib import Path
 from typing import Callable
 from uuid import uuid4
 
-from app.media.frames import analysis_frame_count, select_timestamps
-from app.observations import observation
+from app.services.mediaService.frames import analysis_frame_count, select_timestamps
+from app.utils.observations import observation
 from app.utils.packages import package_version
 from app.utils.paths import relative
 

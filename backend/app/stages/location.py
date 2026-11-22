@@ -11,13 +11,13 @@ import re
 from collections import Counter
 from pathlib import Path
 
-from app.errors import SkipStage
-from app.geo import (
+from app.utils.errors import SkipStage
+from app.services.geoInspectService.geo import (
     device_evidence,
     extract_text_evidence,
     summarize,
 )
-from app.observations import observation
+from app.utils.observations import observation
 from app.utils.paths import relative
 
 

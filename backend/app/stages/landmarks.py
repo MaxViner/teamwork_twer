@@ -14,9 +14,9 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from app.errors import SkipStage
-from app.keyframes import collect_frames
-from app.observations import observation
+from app.utils.errors import SkipStage
+from app.services.visyalInspectorService.keyframes import collect_frames
+from app.utils.observations import observation
 from app.utils.timecodes import numeric_time, timestamp
 
 

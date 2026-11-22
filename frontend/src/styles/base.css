@@ -17,10 +17,10 @@
     --text-secondary: #b8bfc7;
     --muted: #8b939c;
 
-    --accent: #ff8a3d;
-    --accent-strong: #ff9d5c;
+    --accent: #3d4dff;
+    --accent-strong: #5ce9ff;
     --accent-soft: rgba(255, 138, 61, 0.14);
-    --accent-border: rgba(255, 138, 61, 0.42);
+    --accent-border: rgba(255, 0, 255, 0.42);
 
     --info: #4f8cff;
     --info-soft: rgba(79, 140, 255, 0.14);

@@ -13,9 +13,9 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from app.errors import SkipStage
-from app.media.frames import analysis_frame_count, stage_frames
-from app.observations import observation
+from app.utils.errors import SkipStage
+from app.services.mediaService.frames import analysis_frame_count, stage_frames
+from app.utils.observations import observation
 from app.stages.visual_profile import analyze_frame
 
 ROAD_SEMANTIC_LABELS = {"road", "path", "bridge"}

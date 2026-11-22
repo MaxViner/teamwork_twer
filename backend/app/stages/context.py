@@ -8,8 +8,8 @@
 import unicodedata
 from pathlib import Path
 
-from app.errors import SkipStage
-from app.observations import observation
+from app.utils.errors import SkipStage
+from app.utils.observations import observation
 
 
 def extract_structure(

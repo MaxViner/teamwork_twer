@@ -23,6 +23,10 @@ export const fetchJob = (id) =>
     request(`/jobs/${id}`);
 
 
+export const fetchMapQuery = (id, options = {}) =>
+    request(`/jobs/${id}/map-query`, options);
+
+
 
 export const searchJob = (id, query) =>
     request(

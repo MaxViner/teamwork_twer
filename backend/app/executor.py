@@ -11,7 +11,7 @@ from uuid import uuid4
 
 from fastapi import HTTPException
 
-from app.errors import SkipStage
+from app.utils.errors import SkipStage
 from app.jobs import (
     DATA,
     LAST_PROGRESS_UPDATE,

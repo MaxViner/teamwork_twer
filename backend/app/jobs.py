@@ -20,7 +20,7 @@ from fastapi import HTTPException
 
 
 from app.config import STAGE_WEIGHTS
-from app.errors import JobError
+from app.utils.errors import JobError
 
 
 

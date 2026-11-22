@@ -12,7 +12,7 @@ from app.config import (
     MAX_ANALYSIS_FRAMES,
     MIN_FRAME_SPACING_SECONDS,
 )
-from app.media.ffmpeg import extract_frame
+from app.services.mediaService.ffmpeg import extract_frame
 from app.utils.paths import relative
 
 

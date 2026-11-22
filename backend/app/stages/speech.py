@@ -11,10 +11,10 @@ from pathlib import Path
 from typing import Callable
 
 
-from app.errors import SkipStage
-from app.media.ffmpeg import extract_audio
-from app.media.voice import assign_speakers
-from app.observations import observation
+from app.utils.errors import SkipStage
+from app.services.mediaService.ffmpeg import extract_audio
+from app.services.voceInspectService.voice import assign_speakers
+from app.utils.observations import observation
 from app.utils.packages import package_version
 from app.utils.paths import relative
 

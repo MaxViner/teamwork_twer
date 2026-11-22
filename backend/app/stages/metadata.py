@@ -9,11 +9,11 @@ import json
 import shutil
 from pathlib import Path
 
-from app.media.containers import (
+from app.services.mediaService.containers import (
     parse_gps,
     read_container_metadata,
 )
-from app.observations import observation
+from app.utils.observations import observation
 from app.utils.commands import command
 from app.utils.paths import relative
 

@@ -9,14 +9,14 @@ from pathlib import Path
 from typing import Callable
 
 from app.config import MAX_DURATION_SECONDS, MAX_SOURCE_PIXELS
-from app.media.ffmpeg import make_preview_with_progress
-from app.media.probing import (
+from app.services.mediaService.ffmpeg import make_preview_with_progress
+from app.services.mediaService.probing import (
     duration_of,
     first_stream,
     probe,
     stream_start_time,
 )
-from app.observations import observation
+from app.utils.observations import observation
 from app.utils.commands import require_tools
 from app.utils.hashing import sha256_of
 from app.utils.paths import relative

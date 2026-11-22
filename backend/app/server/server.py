@@ -33,16 +33,17 @@ from app.jobs import (
     save_job,
     stage_enabled,
 )
-from app.keyframes import (
+from app.services.visyalInspectorService.keyframes import (
     collect_frames,
     group_frames,
     scene_intervals,
 )
 from app.models import AnalyzeOptions, ReviewPatch
 from app.pipeline import STAGES
-from app.reporting import render_evidence_json, render_report
+from app.services.geoInspectService.geo_scene import build_geo_scenes
+from app.services.reportingService.reporting import render_evidence_json, render_report
 from app.search import search_job
-from app.transcript import (
+from app.services.voceInspectService.transcript import (
     to_srt,
     to_vtt,
     transcript_payload,
@@ -189,6 +190,72 @@ def get_job(job_id: str):
         stage.pop("history")
 
     return job
+
+
+@appServer.get("/api/jobs/{job_id}/map-query")
+def get_map_query(job_id: str):
+    """Return compact, source-linked map-search hypotheses; never coordinates."""
+    job = load_job(job_id)
+    geo = build_geo_scenes(job.get("stages") or {})
+    claims_by_id = {item["id"]: item for item in geo.get("claims") or []
+                    if isinstance(item, dict) and item.get("id")}
+    referenced = set()
+    for scene in geo.get("scenes") or []:
+        referenced.update(scene.get("claim_ids") or [])
+        referenced.update(scene.get("region_claim_ids") or [])
+    referenced.update(geo.get("unlocated_claim_ids") or [])
+
+    claims = []
+    for source_claim in geo.get("claims") or []:
+        claim_id = source_claim.get("id") if isinstance(source_claim, dict) else None
+        if claim_id not in referenced:
+            continue
+        claim = claims_by_id.get(claim_id)
+        if not claim:
+            continue
+        claims.append({
+            "id": claim.get("id"),
+            "subject": claim.get("subject"),
+            "predicate": claim.get("predicate"),
+            "value": claim.get("value"),
+            "modality": claim.get("modality"),
+            "support_count": claim.get("support_count", 0),
+            "support": [
+                {key: evidence.get(key) for key in
+                 ("source", "start", "end", "quote", "artifact", "review", "alignment")
+                 if evidence.get(key) is not None}
+                for evidence in (claim.get("support") or [])[:2]
+                if isinstance(evidence, dict)
+            ],
+        })
+        if len(claims) >= 50:
+            break
+
+    scenes = []
+    for scene in (geo.get("scenes") or [])[:12]:
+        scenes.append({
+            "id": scene.get("id"),
+            "start": scene.get("start"),
+            "end": scene.get("end"),
+            "kind": scene.get("kind"),
+            "claim_ids": scene.get("claim_ids") or [],
+            "frame_candidates": [
+                {key: frame.get(key) for key in ("timestamp", "artifact", "visual_candidates")
+                 if frame.get(key) is not None}
+                for frame in (scene.get("frame_candidates") or [])[:3]
+                if isinstance(frame, dict)
+            ],
+        })
+    return {
+        "schema_version": 1,
+        "status": geo.get("status", "hypotheses_not_geolocation"),
+        "map_queries": geo.get("map_queries") or {},
+        "claims": claims,
+        "scenes": scenes,
+        "limits": geo.get("limits") or [],
+        "coordinates": None,
+        "external_sources_checked": False,
+    }
 
 
 @appServer.get("/api/jobs/{job_id}/transcript.json")

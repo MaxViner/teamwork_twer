@@ -12,8 +12,8 @@ from pathlib import Path
 
 import numpy as np
 
-from app.media.frames import analysis_frame_count, stage_frames
-from app.observations import observation
+from app.services.mediaService.frames import analysis_frame_count, stage_frames
+from app.utils.observations import observation
 
 
 METRIC_KEYS = (

@@ -8,7 +8,7 @@
 from pathlib import Path
 from typing import Callable
 
-from app.observations import observation
+from app.utils.observations import observation
 from app.utils.packages import package_version
 
 

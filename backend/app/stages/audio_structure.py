@@ -12,8 +12,8 @@ from pathlib import Path
 
 import numpy as np
 
-from app.errors import SkipStage
-from app.observations import observation
+from app.utils.errors import SkipStage
+from app.utils.observations import observation
 from app.utils.commands import command
 from app.utils.paths import relative
 

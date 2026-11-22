@@ -8,14 +8,14 @@
 
 from pathlib import Path
 
-from app.errors import SkipStage
-from app.keyframes import collect_frames
-from app.media.faces import (
+from app.utils.errors import SkipStage
+from app.services.visyalInspectorService.keyframes import collect_frames
+from app.services.visyalInspectorService.faces import (
     cluster_faces,
     detect_faces,
     model_available,
 )
-from app.observations import observation
+from app.utils.observations import observation
 
 
 MAX_FACE_FRAMES = 600
