@@ -1,92 +1,54 @@
-export default function UploadSettings({
-    options,
-    onChange,
-}) {
+const MIN_FRAMES = 1;
+const MAX_FRAMES = 1500;
+
+export default function UploadSettings({ options, onChange }) {
     return (
         <div className="form-grid">
             <label>
-                Кадров для анализа
+                Кадров для анализа (1–1500)
                 <input
                     type="number"
-                    min="1"
-                    max="2000"
-                    step="50"
+                    min={MIN_FRAMES}
+                    max={MAX_FRAMES}
+                    step={1}
+                    required
                     value={options.max_frames}
-                    onChange={(event) =>
+                    onChange={(event) => {
+                        const { value, valueAsNumber } = event.currentTarget;
                         onChange(
                             "max_frames",
-                            Number(
-                                event.target.value,
-                            ),
-                        )
-                    }
+                            value === "" ? "" : valueAsNumber,
+                        );
+                    }}
                 />
-
-                <span className="muted">
-                    По умолчанию 500. Для длинных видео
-                    имеет смысл 500–2000: кадры
-                    распределяются по сценам и локациям.
-                </span>
             </label>
-
 
             <label>
                 Язык речи
                 <select
                     value={options.language || ""}
                     onChange={(event) =>
-                        onChange(
-                            "language",
-                            event.target.value || null,
-                        )
+                        onChange("language", event.target.value || null)
                     }
                 >
-                    <option value="">
-                        Автоматически
-                    </option>
-
-
-                    <option value="ru">
-                        Русский
-                    </option>
-
-
-                    <option value="en">
-                        Английский
-                    </option>
+                    <option value="">Автоматически</option>
+                    <option value="ru">Русский</option>
+                    <option value="en">Английский</option>
                 </select>
             </label>
-
 
             <label>
                 Модель Whisper
                 <select
                     value={options.whisper_model}
                     onChange={(event) =>
-                        onChange(
-                            "whisper_model",
-                            event.target.value,
-                        )
+                        onChange("whisper_model", event.target.value)
                     }
                 >
-                    <option value="tiny">
-                        tiny
-                    </option>
-
-
-                    <option value="base">
-                        base
-                    </option>
-
-
-                    <option value="small">
-                        small
-                    </option>
-
-
-                    <option value="medium">
-                        medium
-                    </option>
+                    <option value="tiny">tiny</option>
+                    <option value="base">base</option>
+                    <option value="small">small</option>
+                    <option value="medium">medium</option>
                 </select>
             </label>
         </div>

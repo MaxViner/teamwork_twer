@@ -1,0 +1,151 @@
+.upload-panel {
+    overflow: hidden;
+}
+
+
+
+
+.upload-panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+}
+
+
+
+
+.upload-panel-title {
+    min-width: 0;
+}
+
+
+
+
+.upload-panel-title h2 {
+    margin: 0;
+}
+
+
+
+
+.upload-panel-status {
+    margin: 0.25rem 0 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+
+
+
+.upload-panel-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    padding: 0.45rem 0.75rem;
+    border: 1px solid rgba(127, 127, 127, 0.35);
+    border-radius: 0.5rem;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+    transition:
+        background-color 0.18s ease,
+        border-color 0.18s ease,
+        transform 0.18s ease;
+}
+
+
+
+
+.upload-panel-toggle:hover {
+    background: rgba(127, 127, 127, 0.08);
+    border-color: #ff8a3d;
+    color: #ff8b3d94;
+    transform: scale(1.02);
+}
+
+
+
+
+.upload-panel-toggle:active {
+    transform: scale(0.98);
+}
+
+
+
+
+.upload-panel-toggle:focus-visible {
+    outline: 2px solid currentColor;
+    outline-offset: 2px;
+}
+
+
+
+
+.upload-panel-toggle-icon {
+    display: inline-flex;
+    transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+
+
+
+.upload-panel-toggle[aria-expanded="true"]
+.upload-panel-toggle-icon {
+    transform: rotate(180deg);
+}
+
+
+
+
+.upload-panel-content {
+    display: grid;
+    grid-template-rows: 0fr;
+    transition:
+        grid-template-rows 0.32s cubic-bezier(0.4, 0, 0.2, 1),
+        opacity 0.24s ease,
+        margin-top 0.32s cubic-bezier(0.4, 0, 0.2, 1);
+    opacity: 0;
+    margin-top: 0;
+    pointer-events: none;
+    visibility: hidden;
+}
+
+
+
+
+.upload-panel-content.is-expanded {
+    grid-template-rows: 1fr;
+    opacity: 1;
+    margin-top: 0.9rem;
+    pointer-events: auto;
+    visibility: visible;
+}
+
+
+
+
+.upload-panel-content-inner {
+    min-height: 0;
+    overflow: hidden;
+}
+
+
+
+
+.upload-panel-content-inner form {
+    padding-top: 0.35rem;
+}
+
+
+
+
+@media (prefers-reduced-motion: reduce) {
+    .upload-panel-toggle,
+    .upload-panel-toggle-icon,
+    .upload-panel-content {
+        transition: none;
+    }
+}

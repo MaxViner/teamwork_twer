@@ -7,7 +7,7 @@ import VideoWorkspace from "./components/VideoWorkspace.jsx";
 import FindingsPanel from "./components/FindingsPanel.jsx";
 import LocationDossier from "./components/LocationDossier.jsx";
 import LandmarksPanel from "./components/LandmarksPanel.jsx";
-import KeyFramesPanel from "./components/KeyFramesPanel.jsx";
+import KeyFramesPanel from "./components/keyFrames/KeyFramesPanel.jsx";
 import SummaryPanel from "./components/SummaryPanel.jsx";
 import StructurePanel from "./components/StructurePanel.jsx";
 import TranscriptPanel from "./components/TranscriptPanel.jsx";

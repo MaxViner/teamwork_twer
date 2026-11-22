@@ -12,7 +12,7 @@ from pathlib import Path
 
 import numpy as np
 
-from app.media.frames import analysis_frame_count, stage_frames
+from app.media.frames import stage_frames
 from app.observations import observation
 from app.stages.visual_profile import (
     analyze_frame,
@@ -186,6 +186,12 @@ HEURISTIC_LABELS = {
 }
 
 
+DEFAULT_SCENE_FRAMES = 12
+MAX_SCENE_FRAMES = 1500
+MAX_ERROR_EXAMPLES = 20
+SMALL_LANDMARK_LABELS = {"signboard", "tower", "pole", "bridge"}
+
+
 def extract_scene_objects(
     folder: Path,
     run_folder: Path,
@@ -195,7 +201,9 @@ def extract_scene_objects(
     options: dict,
     progress,
 ) -> dict:
-    count = analysis_frame_count(options)
+    count = max(1, min(MAX_SCENE_FRAMES, int(
+        options.get("max_frames", DEFAULT_SCENE_FRAMES),
+    )))
 
     frames = stage_frames(
         folder=folder,
@@ -213,7 +221,7 @@ def extract_scene_objects(
         )
 
     try:
-        return _extract_with_model(
+        result = _extract_with_model(
             folder,
             frames,
             progress,
@@ -226,12 +234,15 @@ def extract_scene_objects(
             "использую оценочный профиль сцены",
         )
 
-        return _extract_with_heuristics(
+        result = _extract_with_heuristics(
             folder,
             frames,
             progress,
             error,
         )
+
+    result["requested_frames"] = count
+    return result
 
 
 def _extract_with_model(
@@ -270,7 +281,7 @@ def _extract_with_model(
     try:
         for index, frame in enumerate(frames):
             progress(
-                (index + 1) / len(frames) * 100,
+                index / len(frames) * 100,
                 f"Анализ объектов: кадр {index + 1}/{len(frames)}",
             )
 
@@ -303,9 +314,6 @@ def _extract_with_model(
                     probabilities,
                     model.config.id2label,
                 )
-
-                if not found:
-                    continue
 
                 saved_frames.append({
                     "timestamp": frame["timestamp"],
@@ -342,11 +350,13 @@ def _extract_with_model(
                 method="segformer",
                 model=SCENE_MODEL,
             ),
-            "errors": errors,
+            "errors": errors[:MAX_ERROR_EXAMPLES],
+            "error_count": len(errors),
             "model": SCENE_MODEL,
             "method": "segformer",
             "sampled_frames": len(frames),
             "successful_frames": len(saved_frames),
+            "frames_with_objects": sum(bool(frame["objects"]) for frame in saved_frames),
             "unique_objects": unique_objects,
             "object_count": len(unique_objects),
             "category_count": len({
@@ -391,7 +401,10 @@ def _labels_from_segmentation(
         mask = segmentation == label_id
         area_percent = float(mask.mean() * 100)
 
-        if area_percent < 1.0:
+        # Мелкие ориентиры могут занимать меньше 1% кадра. Для них
+        # требуем более высокий средний балл, а не выдаём метку за факт.
+        min_area = 0.15 if label in SMALL_LANDMARK_LABELS else 1.0
+        if area_percent < min_area:
             continue
 
         ys, xs = np.where(mask)
@@ -402,8 +415,8 @@ def _labels_from_segmentation(
         bbox = [
             float(xs.min() / width),
             float(ys.min() / height),
-            float(xs.max() / width),
-            float(ys.max() / height),
+            float((xs.max() + 1) / width),
+            float((ys.max() + 1) / height),
         ]
 
         confidence = float(
@@ -413,6 +426,9 @@ def _labels_from_segmentation(
                 xs,
             ].mean()
         )
+
+        if area_percent < 1.0 and (len(xs) < 4 or confidence < 0.60):
+            continue
 
         found.append({
             "label": label,
@@ -438,7 +454,7 @@ def _extract_with_heuristics(
 
     for index, frame in enumerate(frames):
         progress(
-            (index + 1) / len(frames) * 100,
+            index / len(frames) * 100,
             "Оценка сцены: кадр "
             f"{index + 1}/{len(frames)}",
         )
@@ -485,12 +501,14 @@ def _extract_with_heuristics(
             method="heuristic-fallback",
             model=None,
         ),
-        "errors": errors,
+        "errors": errors[:MAX_ERROR_EXAMPLES],
+        "error_count": len(errors),
         "model": None,
         "method": "heuristic-fallback",
         "model_error": str(model_error)[:1000],
         "sampled_frames": len(frames),
         "successful_frames": len(saved_frames),
+        "frames_with_objects": sum(bool(frame["objects"]) for frame in saved_frames),
         "unique_objects": unique_objects,
         "object_count": len(unique_objects),
         "category_count": len({
@@ -498,7 +516,7 @@ def _extract_with_heuristics(
             for item in unique_objects
         }),
         "note": (
-            "Семантическая модель недоступна без загрузки. "
+            "Семантическая модель недоступна или не обработала выборку. "
             "Типы поверхностей оценены по цвету и текстуре; "
             "это не координаты и не подтверждённый адрес."
         ),
@@ -527,7 +545,7 @@ def unique_objects_from_frames(
         if timestamp is None:
             continue
 
-        timestamp = round(float(timestamp), 3)
+        timestamp = round(float(timestamp), 6)
         artifact = frame.get("artifact")
 
         for item in frame.get("objects", []):

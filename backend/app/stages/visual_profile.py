@@ -12,7 +12,7 @@ from pathlib import Path
 
 import numpy as np
 
-from app.media.frames import analysis_frame_count, stage_frames
+from app.media.frames import stage_frames
 from app.observations import observation
 
 
@@ -40,6 +40,11 @@ METRIC_KEYS = (
 )
 
 
+DEFAULT_VISUAL_FRAMES = 12
+MAX_VISUAL_FRAMES = 1500
+MAX_ERROR_EXAMPLES = 20
+
+
 def extract_visual_profile(
     folder: Path,
     run_folder: Path,
@@ -49,7 +54,9 @@ def extract_visual_profile(
     options: dict,
     progress,
 ) -> dict:
-    count = analysis_frame_count(options)
+    count = max(1, min(MAX_VISUAL_FRAMES, int(
+        options.get("max_frames", DEFAULT_VISUAL_FRAMES),
+    )))
     frames = stage_frames(
         folder=folder,
         run_folder=run_folder,
@@ -65,15 +72,27 @@ def extract_visual_profile(
 
     segments = []
     analyzed = []
+    errors = []
+    error_count = 0
 
     for index, frame in enumerate(frames):
         progress(
-            (index + 1) / len(frames) * 100,
+            index / len(frames) * 99,
             f"Визуальный профиль: кадр {index + 1} из {len(frames)}",
         )
 
-        metrics = analyze_frame(frame["path"])
-        descriptors = describe_metrics(metrics)
+        try:
+            metrics = analyze_frame(frame["path"])
+            descriptors = describe_metrics(metrics)
+        except (OSError, ValueError) as error:
+            error_count += 1
+            if len(errors) < MAX_ERROR_EXAMPLES:
+                errors.append({
+                    "timestamp": frame["timestamp"],
+                    "artifact": frame["artifact"],
+                    "error": str(error)[:500],
+                })
+            continue
 
         analyzed.append({
             "timestamp": frame["timestamp"],
@@ -83,11 +102,17 @@ def extract_visual_profile(
         })
 
         segments.append({
-            "start": round(float(frame["timestamp"]), 3),
-            "end": round(float(frame["timestamp"]), 3),
+            "start": round(float(frame["timestamp"]), 6),
+            "end": round(float(frame["timestamp"]), 6),
             "text": _observation_text(descriptors),
             "artifact": frame["artifact"],
         })
+
+    if not analyzed:
+        raise RuntimeError(
+            "Не удалось проанализировать ни одного кадра визуального профиля. "
+            + errors[0]["error"]
+        )
 
     profile = aggregate_profile(analyzed)
 
@@ -100,6 +125,11 @@ def extract_visual_profile(
 
     return {
         "frames": analyzed,
+        "requested_frames": count,
+        "sampled_frames": len(frames),
+        "successful_frames": len(analyzed),
+        "error_count": error_count,
+        "errors": errors,
         "profile": profile,
         "observations": observations,
         "segment_count": len(segments),
@@ -107,6 +137,7 @@ def extract_visual_profile(
             "Освещённость, погода, сезон и тип ландшафта "
             "оценены по цвету и текстуре кадров. Это "
             "предварительные признаки, а не точное место."
+            + (f" Не удалось обработать кадров: {error_count}." if error_count else "")
         ),
     }
 
