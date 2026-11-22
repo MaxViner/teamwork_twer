@@ -25,6 +25,7 @@ class AnalyzeOptions(BaseModel):
     speech: bool = True
     ocr: bool = True
     scene_objects: bool = True
+    faces: bool = True
     visual_profile: bool = True
     location_evidence: bool = True
     road_geometry: bool = True
@@ -82,6 +83,7 @@ class Observation(BaseModel):
         "structure",
         "reappearance",
         "scene_objects",
+        "faces",
         "visual_profile",
         "road_geometry",
         "location_evidence",

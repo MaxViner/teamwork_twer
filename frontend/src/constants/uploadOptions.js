@@ -5,6 +5,7 @@ export const DEFAULT_UPLOAD_OPTIONS = {
     ocr: true,
     structure: true,
     scene_objects: true,
+    faces: true,
     visual_profile: true,
     road_geometry: true,
     location_evidence: true,
@@ -61,6 +62,13 @@ export const UPLOAD_TOGGLES = [
         name: "scene_objects",
         title: "Определять объекты и признаки места",
         description: "Находит дорогу, здания, деревья, воду и другие видимые элементы сцены.",
+    },
+
+
+    {
+        name: "faces",
+        title: "Находить лица и людей",
+        description: "Отмечает лица и объединяет похожие в анонимные метки «Человек N». Личность не устанавливается.",
     },
 
 

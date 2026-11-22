@@ -1,117 +1,190 @@
-"""Pydantic-модели настроек анализа, наблюдений и пользовательских правок."""
+"""Выбор кадров для анализа.
 
-from typing import Any, Literal
-from uuid import uuid4
+Считает равномерные моменты времени, добавляет середины найденных
+сцен и убирает слишком близкие дубли. Один и тот же набор кадров
+используют OCR, визуальный профиль, объекты и геометрия дороги.
+"""
 
-from pydantic import BaseModel, ConfigDict, Field
+from pathlib import Path
+
+from app.config import (
+    DEFAULT_ANALYSIS_FRAMES,
+    MAX_ANALYSIS_FRAMES,
+    MIN_FRAME_SPACING_SECONDS,
+)
+from app.media.ffmpeg import extract_frame
+from app.utils.paths import relative
 
 
-class AnalyzeOptions(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+def analysis_frame_count(options: dict) -> int:
+    """Сколько кадров запросил пользователь с учётом лимита."""
+    try:
+        value = int(options.get(
+            "max_frames",
+            DEFAULT_ANALYSIS_FRAMES,
+        ))
 
-    metadata: bool = True
-    speech: bool = True
-    ocr: bool = True
-    scene_objects: bool = True
-    visual_profile: bool = True
-    location_evidence: bool = True
-    road_geometry: bool = True
-    audio_structure: bool = True
-    structure: bool = True
+    except (TypeError, ValueError):
+        value = DEFAULT_ANALYSIS_FRAMES
 
-    language: str | None = Field(
-        default=None,
-        max_length=16,
-    )
+    return max(1, min(MAX_ANALYSIS_FRAMES, value))
 
-    max_frames: int = Field(
-        default=12,
-        ge=1,
-        le=1500,
-        description=(
-            "Запрошенное число точек выборки кадров. "
-            "Отдельные этапы анализа могут применять собственные ограничения."
+
+def select_timestamps(
+    duration: float,
+    count: int,
+    stages: dict,
+) -> list[float]:
+    count = max(1, int(count))
+
+    if duration <= 0:
+        return []
+
+    # Для короткого клипа не имеет смысла брать тысячи почти
+    # одинаковых кадров: держим минимальный шаг между ними.
+    uniform_count = min(
+        count,
+        max(
+            1,
+            int(duration / MIN_FRAME_SPACING_SECONDS) + 1,
         ),
     )
 
-    whisper_model: Literal[
-        "tiny",
-        "base",
-        "small",
-        "medium",
-    ] = "small"
-
-
-class Observation(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    id: str = Field(
-        default_factory=lambda: uuid4().hex,
-    )
-
-    source: Literal[
-        "technical",
-        "metadata",
-        "scene",
-        "speech",
-        "ocr",
-        "audio_structure",
-        "audio_event",
-        "structure",
-        "reappearance",
-        "scene_objects",
-        "visual_profile",
-        "road_geometry",
-        "location_evidence",
+    times = [
+        duration * (index + 0.5) / uniform_count
+        for index in range(uniform_count)
     ]
 
-    start: float = Field(
-        default=0,
-        ge=0,
-        allow_inf_nan=False,
+    times.extend(_scene_centers(stages))
+
+    times = sorted({
+        round(min(max(0.0, value), duration * 0.999), 6)
+        for value in times
+    })
+
+    return _thin(_limit_timestamps(times, count))
+
+
+def _scene_centers(stages: dict) -> list[float]:
+    stage = stages.get("scenes", {})
+
+    if stage.get("status") != "completed":
+        return []
+
+    intervals = stage.get("result", {}).get(
+        "intervals",
+        [],
     )
 
-    end: float = Field(
-        default=0,
-        ge=0,
-        allow_inf_nan=False,
-    )
+    centers = []
 
-    text: str
-    corrected_text: str | None = None
+    for value in intervals:
+        if not isinstance(value, (list, tuple)):
+            continue
 
-    review: Literal[
-        "unreviewed",
-        "accepted",
-        "rejected",
-    ] = "unreviewed"
+        if len(value) < 2:
+            continue
 
-    artifact: str | None = None
-    frame_artifact: str | None = None
-    bbox: list[float] | None = None
+        centers.append(
+            (float(value[0]) + float(value[1])) / 2
+        )
 
-    recognition_score: float | None = Field(
-        default=None,
-        ge=0,
-        le=1,
-        allow_inf_nan=False,
-    )
-
-    extractor: str
-    data: dict[str, Any] = Field(
-        default_factory=dict,
-    )
+    return centers
 
 
-class ReviewPatch(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+def _limit_timestamps(
+    times: list[float],
+    count: int,
+) -> list[float]:
+    if len(times) <= count:
+        return times
 
-    text: str = Field(
-        max_length=20000,
-    )
-
-    review: Literal[
-        "unreviewed",
-        "accepted",
-        "rejected",
+    return [
+        times[
+            min(
+                len(times) - 1,
+                int((index + 0.5) * len(times) / count),
+            )
+        ]
+        for index in range(count)
     ]
+
+
+def _thin(times: list[float]) -> list[float]:
+    """Убирает кадры, которые стоят почти вплотную."""
+    result = []
+
+    for value in times:
+        if (
+            result
+            and value - result[-1] < MIN_FRAME_SPACING_SECONDS
+        ):
+            continue
+
+        result.append(value)
+
+    return result
+
+
+def ocr_frames(folder: Path, stages: dict) -> list[dict]:
+    stage = stages.get("ocr", {})
+
+    if stage.get("status") != "completed":
+        return []
+
+    frames = []
+
+    for item in stage.get("result", {}).get("frames", []):
+        artifact = item.get("artifact")
+
+        if not artifact:
+            continue
+
+        path = folder / artifact
+
+        if not path.is_file():
+            continue
+
+        frames.append({
+            "timestamp": float(item.get("timestamp", 0.0)),
+            "artifact": artifact,
+            "path": path,
+        })
+
+    return frames
+
+
+def stage_frames(
+    folder: Path,
+    run_folder: Path,
+    video: Path,
+    duration: float,
+    stages: dict,
+    count: int,
+    prefix: str = "frame",
+) -> list[dict]:
+    """Переиспользует кадры OCR либо извлекает собственные."""
+
+    frames = ocr_frames(folder, stages)
+
+    if frames:
+        return frames[: max(1, int(count))]
+
+    saved = []
+
+    for index, timestamp in enumerate(
+        select_timestamps(duration, count, stages)
+    ):
+        destination = run_folder / (
+            f"{prefix}_{index:03d}.jpg"
+        )
+
+        extract_frame(video, destination, timestamp)
+
+        saved.append({
+            "timestamp": timestamp,
+            "artifact": relative(folder, destination),
+            "path": destination,
+        })
+
+    return saved

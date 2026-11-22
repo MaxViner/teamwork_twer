@@ -62,6 +62,7 @@ def extract_speech(
         str(audio),
         language=options.get("language") or None,
         vad_filter=True,
+        word_timestamps=True,
     )
 
     speech_segments = []
@@ -101,6 +102,7 @@ def extract_speech(
             "start": round(start, 3),
             "end": round(end, 3),
             "text": text,
+            **_words(segment, offset, duration),
         })
 
     progress(100.0, "Распознавание речи завершено")
@@ -176,3 +178,57 @@ def _clamp(
     minimum: float = 0.0,
 ) -> float:
     return min(maximum, max(minimum, value))
+
+
+def _words(segment, offset: float, duration: float) -> dict:
+    """
+    Таймкоды слов и оценка уверенности реплики.
+
+    Слова нужны для точного перехода внутри фразы и для экспорта
+    субтитров. Низкая оценка помечает фрагмент как вероятно
+    неточный, а не как гарантированно распознанный.
+    """
+    words = []
+
+    for item in getattr(segment, "words", None) or []:
+        word = str(getattr(item, "word", "") or "").strip()
+
+        if not word:
+            continue
+
+        start = _clamp(float(item.start) + offset, duration)
+        end = _clamp(
+            float(item.end) + offset,
+            duration,
+            minimum=start,
+        )
+
+        words.append({
+            "start": round(start, 3),
+            "end": round(end, 3),
+            "word": word,
+            "probability": round(
+                float(getattr(item, "probability", 0) or 0),
+                3,
+            ),
+        })
+
+    probabilities = [
+        item["probability"]
+        for item in words
+        if item["probability"]
+    ]
+
+    probability = (
+        round(sum(probabilities) / len(probabilities), 3)
+        if probabilities
+        else None
+    )
+
+    return {
+        "words": words,
+        "probability": probability,
+        "uncertain": bool(
+            probability is not None and probability < 0.5
+        ),
+    }

@@ -12,7 +12,7 @@ from pathlib import Path
 
 import numpy as np
 
-from app.media.frames import stage_frames
+from app.media.frames import analysis_frame_count, stage_frames
 from app.observations import observation
 from app.stages.visual_profile import (
     analyze_frame,
@@ -186,8 +186,8 @@ HEURISTIC_LABELS = {
 }
 
 
-DEFAULT_SCENE_FRAMES = 12
-MAX_SCENE_FRAMES = 1500
+DEFAULT_SCENE_FRAMES = 500
+MAX_SCENE_FRAMES = 2000
 MAX_ERROR_EXAMPLES = 20
 SMALL_LANDMARK_LABELS = {"signboard", "tower", "pole", "bridge"}
 
@@ -201,9 +201,7 @@ def extract_scene_objects(
     options: dict,
     progress,
 ) -> dict:
-    count = max(1, min(MAX_SCENE_FRAMES, int(
-        options.get("max_frames", DEFAULT_SCENE_FRAMES),
-    )))
+    count = analysis_frame_count(options)
 
     frames = stage_frames(
         folder=folder,

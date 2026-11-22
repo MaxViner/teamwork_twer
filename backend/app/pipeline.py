@@ -16,6 +16,7 @@ from app.stages.scenes import extract_scenes
 from app.stages.speech import extract_speech
 
 from app.stages.scene_objects import extract_scene_objects
+from app.stages.faces import extract_faces
 from app.stages.location import extract_location_evidence
 from app.stages.audio_structure import extract_audio_structure
 from app.stages.context import extract_structure
@@ -37,6 +38,7 @@ STAGES = (
     "ocr",
     "structure",
     "scene_objects",
+    "faces",
     "visual_profile",
     "road_geometry",
     "location_evidence",
@@ -112,6 +114,14 @@ def run_stage(
             prepared["duration"],
             stages,
             options,
+            progress,
+        ),
+
+
+        "faces": lambda: extract_faces(
+            folder,
+            run_folder,
+            stages,
             progress,
         ),
 

@@ -12,7 +12,7 @@ from pathlib import Path
 
 import numpy as np
 
-from app.media.frames import stage_frames
+from app.media.frames import analysis_frame_count, stage_frames
 from app.observations import observation
 
 
@@ -40,8 +40,8 @@ METRIC_KEYS = (
 )
 
 
-DEFAULT_VISUAL_FRAMES = 12
-MAX_VISUAL_FRAMES = 1500
+DEFAULT_VISUAL_FRAMES = 500
+MAX_VISUAL_FRAMES = 2000
 MAX_ERROR_EXAMPLES = 20
 
 
@@ -54,9 +54,7 @@ def extract_visual_profile(
     options: dict,
     progress,
 ) -> dict:
-    count = max(1, min(MAX_VISUAL_FRAMES, int(
-        options.get("max_frames", DEFAULT_VISUAL_FRAMES),
-    )))
+    count = analysis_frame_count(options)
     frames = stage_frames(
         folder=folder,
         run_folder=run_folder,

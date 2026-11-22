@@ -230,6 +230,270 @@ def _visual(stages):
     return sorted(best.values(), key=lambda item: -item[0])
 
 
+def _faces(stages):
+    stage = _stage(stages, "faces")
+    result = _dict(stage.get("result"))
+    people = _rows(result.get("people"))
+    if not people:
+        return None
+    return {
+        "people": people,
+        "frame_count": result.get("frame_count"),
+        "face_count": result.get("face_count"),
+        "note": _clean(result.get("note")),
+    }
+
+
+def _summary(stages):
+    stage = _stage(stages, "summary")
+    result = _dict(stage.get("result"))
+    if not result or not result.get("overview"):
+        return None
+    return result
+
+
+def _structure(stages):
+    stage = _stage(stages, "video_structure")
+    sections = _rows(_dict(stage.get("result")).get("sections"))
+    return sections or None
+
+
+def _questions(stages):
+    stage = _stage(stages, "comprehension")
+    return _rows(_dict(stage.get("result")).get("questions"))
+
+
+def _landmarks(stages):
+    stage = _stage(stages, "landmarks")
+    result = _dict(stage.get("result"))
+    if not result:
+        return None
+    return {
+        "landmarks": _rows(result.get("landmarks")),
+        "geometry": _dict(result.get("geometry")),
+        "frame_count": result.get("frame_count_total") or result.get("frame_count"),
+    }
+
+
+def _schematic(stages):
+    return _dict(_dict(_stage(stages, "road_geometry").get("result")).get("schematic"))
+
+
+def _speaker_turns(stages):
+    """Короткая сводка реплик по спикерам для отчёта."""
+    stage = _stage(stages, "speech")
+    result = _dict(stage.get("result"))
+    segments = _rows(result.get("segments"))
+    if not segments:
+        return None
+
+    speakers = {}
+    for item in segments:
+        label = item.get("speaker") or "не разделено"
+        entry = speakers.setdefault(label, {"count": 0, "first": None})
+        entry["count"] += 1
+        start = _number(item.get("start"))
+        if start is not None and (
+            entry["first"] is None or start < entry["first"]
+        ):
+            entry["first"] = start
+
+    return {
+        "segments": len(segments),
+        "method": result.get("speaker_method"),
+        "speakers": [
+            {
+                "label": label,
+                "segments": data["count"],
+                "first": data["first"],
+            }
+            for label, data in sorted(speakers.items())
+        ],
+    }
+
+
+def _portable(value):
+    """Оставляет только переносимый относительный путь артефакта."""
+    if not isinstance(value, str) or not value.startswith("runs/"):
+        return None
+    parts = value.split("/")
+    if any(part in {"", ".", ".."} or "\\" in part for part in parts):
+        return None
+    return value
+
+
+def render_evidence_json(job):
+    """
+    Компактный версионированный JSON с уликами.
+
+    Это отдельная выжимка для геопоиска, а не полный job.json.
+    Артефакты указаны относительными путями от папки задания,
+    поэтому переносятся вместе с ней без запущенного сервиса.
+    """
+    job_id = job.get("id")
+    stages = _dict(job.get("stages"))
+    preparation = _dict(_stage(stages, "prepare").get("result"))
+    metadata = _dict(_stage(stages, "metadata").get("result"))
+
+    clues = []
+    for item in _text_clues(stages):
+        clues.append({
+            "type": item.get("kind"),
+            "label": item.get("label"),
+            "source": item.get("source"),
+            "start": _number(item.get("start")),
+            "end": _number(item.get("end")),
+            "excerpt": item.get("excerpt"),
+            "review": item.get("review"),
+            "edited": bool(item.get("edited")),
+            "artifact": _portable(item.get("frame_artifact") or item.get("artifact")),
+        })
+
+    roads = []
+    for episode in _roads(stages):
+        roads.append({
+            "start": _number(episode.get("start")),
+            "end": _number(episode.get("end")),
+            "bend_class": episode.get("bend_class"),
+            "bend_label": episode.get("bend_label"),
+            "frame_count": episode.get("frame_count"),
+            "width_label": episode.get("width_label"),
+            "reference_frames": [
+                {
+                    "timestamp": _number(ref.get("timestamp")),
+                    "artifact": _portable(ref.get("artifact")),
+                }
+                for ref in _rows(episode.get("reference_frames"))[:6]
+            ],
+            "context_clues": [
+                {
+                    "label": clue.get("label_ru") or clue.get("label"),
+                    "side": clue.get("image_side"),
+                    "timestamp": _number(clue.get("timestamp")),
+                    "artifact": _portable(clue.get("artifact")),
+                }
+                for clue in _rows(episode.get("context_clues"))[:6]
+            ],
+            "legacy": bool(episode.get("legacy")),
+        })
+
+    faces = _faces(stages)
+    landmarks = _landmarks(stages)
+    summary = _summary(stages)
+    structure = _structure(stages)
+    questions = _questions(stages)
+    turns = _speaker_turns(stages)
+
+    from app.transcript import transcript_payload
+
+    transcript = transcript_payload(job)
+
+    evidence = {
+        "schema_version": 1,
+        "job_id": job_id,
+        "video": {
+            "name": job.get("name"),
+            "duration": _number(preparation.get("duration")),
+            "created_at": metadata.get("created_at"),
+        },
+        "disclaimer": (
+            "Наблюдение и совпадение — разные вещи. Координаты камеры "
+            "не подтверждены, метки людей анонимны, геометрия дана в "
+            "координатах изображения."
+        ),
+        "artifact_base": f"/api/jobs/{job_id}/files/" if job_id else None,
+        "coordinates": {
+            "gps": [
+                {"latitude": _number(item.get("latitude")),
+                 "longitude": _number(item.get("longitude"))}
+                for item in _rows(metadata.get("gps"))
+                if _coordinates(item)
+            ],
+            "note": (
+                "GPS-тег файла не привязан к кадру. Координаты из речи "
+                "и OCR находятся среди текстовых улик."
+            ),
+        },
+        "text_clues": clues,
+        "road": {
+            "episodes": roads,
+            "schematic": _schematic(stages),
+            "map_match_ready": False,
+        },
+        "landmarks": {
+            "items": landmarks["landmarks"] if landmarks else [],
+            "geometry": landmarks["geometry"] if landmarks else {},
+            "frame_count": landmarks["frame_count"] if landmarks else 0,
+            "note": (
+                "Горизонт, точка схода и симметрия — подсказки для "
+                "сопоставления ракурсов, а не координаты."
+            ),
+        },
+        "faces": {
+            "available": bool(faces),
+            "people": faces["people"] if faces else [],
+            "face_count": faces["face_count"] if faces else 0,
+            "anonymous": True,
+            "note": (
+                "Метки «Человек N» анонимны: это разные лица внутри "
+                "видео, а не установленная личность."
+            ),
+        },
+        "summary": {
+            "overview": summary.get("overview") if summary else None,
+            "topics": summary.get("topics", []) if summary else [],
+            "theses": summary.get("theses", []) if summary else [],
+            "conclusions": summary.get("conclusions", []) if summary else [],
+        },
+        "structure": {
+            "sections": [
+                {
+                    "number": section.get("number"),
+                    "start": _number(section.get("start")),
+                    "end": _number(section.get("end")),
+                    "title": section.get("title"),
+                    "summary": section.get("summary"),
+                    "keywords": section.get("keywords") or [],
+                }
+                for section in structure or []
+            ],
+        },
+        "questions": [
+            {
+                "question": item.get("question"),
+                "answer": item.get("answer"),
+                "start": _number(item.get("time_seconds")),
+            }
+            for item in questions
+        ],
+        "transcript": {
+            "language": transcript.get("language"),
+            "speaker_method": transcript.get("speaker_method"),
+            "speakers": transcript.get("speakers") or [],
+            "turn_summary": turns,
+            "segments": [
+                {
+                    "start": item.get("start"),
+                    "end": item.get("end"),
+                    "text": item.get("text"),
+                    "speaker": item.get("speaker"),
+                    "uncertain": item.get("uncertain"),
+                }
+                for item in transcript.get("segments") or []
+            ],
+        },
+        "limitations": [
+            "Координаты камеры не подтверждены.",
+            "GPS-тег может относиться к файлу или устройству.",
+            "Лица и люди анонимны, личность не устанавливается.",
+            "Геометрия дороги и ориентиров дана в координатах изображения.",
+            "Автоматическое распознавание речи может содержать ошибки.",
+        ],
+    }
+
+    return evidence
+
+
 def render_report(job):
     """Build a fresh Markdown brief from the current completed stages."""
     job_id = job.get("id")
@@ -289,7 +553,48 @@ def render_report(job):
         lines += ["Адресных, архивных и других конкретных текстовых зацепок не найдено или этапы недоступны.", ""]
     elif len(clues) > len(chosen):
         lines += [f"В сводку не вошло ещё {len(clues) - len(chosen)} текстовых зацепок после удаления дублей; исходные наблюдения доступны в JSON.", ""]
-    lines += ["## 3. Дорога и ориентиры для визуальной сверки", ""]
+    lines += ["## 3. Конспект и структура", ""]
+    summary = _summary(stages)
+    structure = _structure(stages)
+    if summary:
+        if summary.get("overview"):
+            lines += [f"- Кратко: {_md(summary['overview'])}"]
+        topics = _rows(summary.get("topics"))
+        if topics:
+            lines.append(
+                "- Темы: " + ", ".join(
+                    _md(item.get("word"))
+                    for item in topics[:8]
+                    if item.get("word")
+                ) + "."
+            )
+        for label, key in (("Тезис", "theses"), ("Вывод", "conclusions")):
+            for item in _rows(summary.get(key))[:4]:
+                text = _clean(item.get("text"))
+                if text:
+                    lines.append(
+                        f"- {label} ({_time(item.get('start'))}): «{_md(text)}»."
+                    )
+        lines.append("")
+    if structure:
+        lines += ["**Смысловые разделы:**", ""]
+        for section in structure[:10]:
+            title = _md(section.get("title")) or "Раздел"
+            text = _clean(section.get("summary"))
+            keywords = ", ".join(section.get("keywords") or [])
+            detail = " ".join(filter(None, (
+                f"«{_md(text)}»." if text else "",
+                f"Ключевые слова: {_md(keywords)}." if keywords else "",
+            )))
+            lines.append(
+                f"- {_interval(section)} — {title}. {detail}".rstrip()
+            )
+        if len(structure) > 10:
+            lines.append(f"- Ещё разделов: {len(structure) - 10}.")
+        lines.append("")
+    if not summary and not structure:
+        lines += ["Конспект и структура недоступны: нет завершённой расшифровки или надписей.", ""]
+    lines += ["## 4. Дорога и ориентиры для визуальной сверки", ""]
     roads = _roads(stages)
     bend_names = {"left": "влево", "right": "вправо", "straight": "прямо",
                   "uncertain": "неоднозначно"}
@@ -327,10 +632,40 @@ def render_report(job):
         lines.append("")
     elif not roads:
         lines += ["Нет визуальных зацепок выбранных типов из завершённых этапов. Это не означает, что объектов нет в видео.", ""]
+    lines += ["## 5. Люди в кадре", ""]
+    faces = _faces(stages)
+    if faces:
+        lines.append(
+            f"- Обнаружено лиц: {faces.get('face_count') or 0} "
+            f"в {faces.get('frame_count') or 0} кадрах; разных людей по внешности: {len(faces['people'])}."
+        )
+        for person in faces["people"][:8]:
+            when = _time(person.get("first_start"))
+            lines.append(
+                f"- {_md(person.get('label'))}: {person.get('frame_count')} кадр., с {when}."
+            )
+        if len(faces["people"]) > 8:
+            lines.append(f"- Ещё людей: {len(faces['people']) - 8}.")
+        lines += ["", "Метки «Человек N» анонимны: это разные лица внутри видео, а не установленная личность. Совпадение лиц между кадрами приблизительное.", ""]
+    else:
+        lines += ["Лица не обнаружены или этап недоступен. Это не значит, что людей в видео нет.", ""]
+    questions = _questions(stages)
+    if questions:
+        lines += ["## 6. Вопросы для самопроверки", ""]
+        for index, item in enumerate(questions[:8], 1):
+            answer = _clean(item.get("answer"))
+            lines.append(
+                f"{index}. {_md(item.get('question'))} "
+                f"({_time(item.get('time_seconds'))})"
+                + (f" — ответ: «{_md(answer)}»." if answer else "")
+            )
+        if len(questions) > 8:
+            lines.append(f"Ещё вопросов: {len(questions) - 8}.")
+        lines.append("")
     unavailable = [label for key, label in (("metadata", "метаданные"), ("ocr", "текст на экране"),
                    ("speech", "речь"), ("road_geometry", "дорога"), ("scene_objects", "объекты"))
                    if not _stage(stages, key)]
-    lines += ["## 4. Ограничения и материалы", ""]
+    lines += ["## 7. Ограничения и материалы", ""]
     if unavailable:
         lines.append(f"- Нет завершённого результата: {', '.join(unavailable)}.")
     lines += ["- Наблюдение и совпадение — разные вещи. Для вывода о месте требуются независимые признаки и сверка ракурса.",

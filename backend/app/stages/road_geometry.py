@@ -14,14 +14,14 @@ import cv2
 import numpy as np
 
 from app.errors import SkipStage
-from app.media.frames import stage_frames
+from app.media.frames import analysis_frame_count, stage_frames
 from app.observations import observation
 from app.stages.visual_profile import analyze_frame
 
 ROAD_SEMANTIC_LABELS = {"road", "path", "bridge"}
 SEMANTIC_ROAD_MIN_PERCENT = 1.0
-DEFAULT_ROAD_FRAMES = 12
-MAX_ROAD_FRAMES = 1500
+DEFAULT_ROAD_FRAMES = 500
+MAX_ROAD_FRAMES = 2000
 EPISODE_MAX_GAP = 5.0
 EPISODE_MAX_DURATION = 30.0
 BEND_LABELS = {
@@ -53,9 +53,7 @@ def extract_road_geometry(
             "Нет подготовленного видео для анализа дороги."
         )
 
-    requested = max(1, min(MAX_ROAD_FRAMES, int(
-        options.get("max_frames", DEFAULT_ROAD_FRAMES),
-    )))
+    requested = analysis_frame_count(options)
     frames = stage_frames(
         folder=folder,
         run_folder=run_folder,
@@ -135,8 +133,9 @@ def extract_road_geometry(
 
     summary = _summarize([item["geometry"] for item in detections], len(frames))
     episodes = _build_episodes(detections, stages, duration / len(frames))
+    schematic = _schematic(episodes)
     summary["episode_count"] = len(episodes)
-    observations = _build_observations(detections, summary)
+    observations = _build_observations(detections, summary, schematic)
 
     progress(100, "Анализ геометрии дороги завершён")
 
@@ -144,6 +143,7 @@ def extract_road_geometry(
         "summary": summary,
         "observations": observations,
         "episodes": episodes,
+        "schematic": schematic,
         "episode_schema_version": 1,
         "errors": errors[:20],
         "error_count": len(errors),
@@ -698,6 +698,10 @@ def _build_episodes(detections: list[dict], stages: dict, sample_step: float) ->
             "segment_end_index": offset + len(group),  # исключающая правая граница
             "bend_class": classification, "bend_label": BEND_LABELS[classification],
             "bend_counts": dict(counts),
+            "width_label": _most_common(
+                item["geometry"].get("width_label")
+                for item in group
+            ),
             "reference_frames": [
                 {"timestamp": group[i]["timestamp"], "artifact": group[i]["artifact"],
                  "segment_index": offset + i}
@@ -709,6 +713,116 @@ def _build_episodes(detections: list[dict], stages: dict, sample_step: float) ->
         })
         offset += len(group)
     return episodes
+
+
+def _most_common(values) -> str | None:
+    counts = Counter(
+        value for value in values if value
+    )
+
+    return counts.most_common(1)[0][0] if counts else None
+
+
+def _schematic(episodes: list[dict]) -> dict:
+    """
+    Относительная схема дороги по эпизодам.
+
+    Это последовательность видимых изгибов и повторяющихся
+    ориентиров. Она не является планом местности: расстояния и
+    азимут не измерены, ракурсы не совмещены.
+    """
+    if not episodes:
+        return {
+            "schema_version": 1,
+            "steps": [],
+            "sequence": "",
+            "repeated_landmarks": [],
+            "note": (
+                "Схема не построена: нет эпизодов с признаками "
+                "дороги."
+            ),
+        }
+
+    steps = []
+    landmarks = {}
+
+    for episode in episodes:
+        clues = episode.get("context_clues") or []
+        labels = []
+
+        for clue in clues:
+            label = clue.get("label_ru") or clue.get("label")
+
+            if not label:
+                continue
+
+            labels.append(label)
+
+            entry = landmarks.setdefault(label, {
+                "label": label,
+                "clue_count": 0,
+                "episode_ids": [],
+                "sides": Counter(),
+                "timestamps": [],
+            })
+
+            entry["clue_count"] += 1
+            entry["sides"][clue.get("image_side") or "unknown"] += 1
+            entry["timestamps"].append(clue.get("timestamp"))
+
+            if episode["id"] not in entry["episode_ids"]:
+                entry["episode_ids"].append(episode["id"])
+
+        steps.append({
+            "episode_id": episode["id"],
+            "start": episode["start"],
+            "end": episode["end"],
+            "bend_class": episode["bend_class"],
+            "bend_label": episode["bend_label"],
+            "width_label": episode.get("width_label"),
+            "landmarks": list(dict.fromkeys(labels))[:4],
+        })
+
+    repeated = []
+
+    for entry in landmarks.values():
+        if len(entry["episode_ids"]) < 2:
+            continue
+
+        repeated.append({
+            "label": entry["label"],
+            "episode_ids": entry["episode_ids"],
+            "clue_count": entry["clue_count"],
+            "sides": dict(entry["sides"]),
+            "first_start": min(
+                value for value in entry["timestamps"]
+                if value is not None
+            ),
+            "last_end": max(
+                value for value in entry["timestamps"]
+                if value is not None
+            ),
+        })
+
+    repeated.sort(
+        key=lambda item: (-len(item["episode_ids"]), -item["clue_count"])
+    )
+
+    sequence = " → ".join(
+        step["bend_label"] for step in steps
+    )
+
+    return {
+        "schema_version": 1,
+        "steps": steps,
+        "sequence": sequence,
+        "repeated_landmarks": repeated[:12],
+        "note": (
+            "Последовательность изгибов и повторяющиеся ориентиры "
+            "относятся к изображению. Расстояния, азимут и "
+            "физическое примыкание дорог не установлены."
+        ),
+    }
 
 
 def _heuristic_road_ok(
@@ -760,6 +874,7 @@ def _heuristic_road_ok(
 def _build_observations(
     detections: list[dict],
     summary: dict,
+    schematic: dict | None = None,
 ) -> list[dict]:
     """
     Складывает все кадры с дорогой в одно наблюдение-сводку.
@@ -838,6 +953,7 @@ def _build_observations(
                 "segment_count": len(segments),
                 "segments": segments,
                 "summary": summary,
+                "schematic": schematic or {},
                 "requires_review": True,
                 "map_match_ready": False,
                 "time_is_approximate": True,

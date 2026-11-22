@@ -9,6 +9,7 @@ const KIND_LABELS = {
     evidence: "Улика",
     object: "Объект",
     landmark: "Ориентир",
+    person: "Человек",
     section: "Раздел",
 };
 

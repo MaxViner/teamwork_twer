@@ -4,7 +4,9 @@
 видео, параметры превью, языки OCR и веса этапов для полосы
 прогресса. Менять эти значения можно без правки логики этапов.
 """
-MAX_DURATION_SECONDS = 20 * 60
+# Верхняя граница длительности. Длинные ролики обрабатываются
+# дольше, но именно для них важно много кадров (500+).
+MAX_DURATION_SECONDS = 60 * 60
 MAX_SOURCE_PIXELS = 4096 * 2160
 
 PREVIEW_WIDTH = 1280
@@ -21,11 +23,12 @@ STAGE_WEIGHTS = {
     "prepare": 4.0,
     "metadata": 4.0,
     "scenes": 8.0,
-    "speech": 13.0,
+    "speech": 12.0,
     "audio_structure": 4.0,
-    "ocr": 13.0,
+    "ocr": 12.0,
     "structure": 4.0,
-    "scene_objects": 13.0,
+    "scene_objects": 12.0,
+    "faces": 3.0,
     "visual_profile": 8.0,
     "road_geometry": 5.0,
     "location_evidence": 8.0,

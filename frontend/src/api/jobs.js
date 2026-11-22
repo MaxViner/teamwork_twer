@@ -31,6 +31,37 @@ export const searchJob = (id, query) =>
 
 
 
+export function fetchKeyframes(
+    id,
+    { page = 1, pageSize = 12, group = null } = {},
+) {
+    const params = new URLSearchParams({
+        page: String(page),
+        page_size: String(pageSize),
+    });
+
+    if (group !== null && group !== undefined) {
+        params.set("group", String(group));
+    }
+
+    return request(
+        `/jobs/${id}/keyframes?${params.toString()}`,
+    );
+}
+
+
+
+export function fetchRoads(
+    id,
+    { page = 1, pageSize = 8 } = {},
+) {
+    return request(
+        `/jobs/${id}/roads?page=${page}&page_size=${pageSize}`,
+    );
+}
+
+
+
 export function createJob({
     file,
     options,

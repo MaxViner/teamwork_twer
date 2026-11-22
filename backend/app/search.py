@@ -105,6 +105,22 @@ def search_job(job: dict, query: str, limit: int = 60) -> list[dict]:
             "score": score,
         })
 
+    for item in _faces(job):
+        score = _score(item["text"], normalized, terms)
+
+        if score <= 0:
+            continue
+
+        results.append({
+            "kind": "person",
+            "label": "Человек",
+            "text": item["text"],
+            "start": item.get("start"),
+            "end": item.get("end"),
+            "artifact": item.get("artifact"),
+            "score": score,
+        })
+
     for item in _sections(job):
         score = _score(item["text"], normalized, terms)
 
@@ -245,6 +261,33 @@ def _landmarks(job):
             "start": frame.get("timestamp"),
             "end": frame.get("timestamp"),
             "artifact": frame.get("artifact"),
+        })
+
+    return values
+
+
+def _faces(job):
+    result = _stage(job, "faces").get("result") or {}
+    values = []
+
+    for person in result.get("people") or []:
+        if not isinstance(person, dict):
+            continue
+
+        label = person.get("label")
+
+        if not label:
+            continue
+
+        best = person.get("best_frame") or {}
+        timestamps = person.get("timestamps") or []
+
+        values.append({
+            "text": f"{label}, появлений: {person.get('frame_count')}",
+            "start": person.get("first_start"),
+            "end": person.get("last_end"),
+            "artifact": best.get("artifact"),
+            "timestamps": timestamps,
         })
 
     return values

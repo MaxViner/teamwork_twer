@@ -6,6 +6,7 @@
 """
 
 import json
+import math
 import shutil
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -32,10 +33,20 @@ from app.jobs import (
     save_job,
     stage_enabled,
 )
+from app.keyframes import (
+    collect_frames,
+    group_frames,
+    scene_intervals,
+)
 from app.models import AnalyzeOptions, ReviewPatch
 from app.pipeline import STAGES
-from app.reporting import render_report
+from app.reporting import render_evidence_json, render_report
 from app.search import search_job
+from app.transcript import (
+    to_srt,
+    to_vtt,
+    transcript_payload,
+)
 
 MAX_UPLOAD_BYTES = 1024 * 1024 * 1024
 
@@ -178,6 +189,46 @@ def get_job(job_id: str):
         stage.pop("history")
 
     return job
+
+
+@appServer.get("/api/jobs/{job_id}/transcript.json")
+def export_transcript_json(job_id: str):
+    return transcript_payload(load_job(job_id))
+
+
+@appServer.get("/api/jobs/{job_id}/transcript.vtt")
+def export_transcript_vtt(job_id: str):
+    from fastapi.responses import Response
+
+    job = load_job(job_id)
+    payload = transcript_payload(job)
+
+    return Response(
+        content=to_vtt(payload, job.get("name") or "Расшифровка"),
+        media_type="text/vtt",
+        headers={
+            "Content-Disposition": (
+                'attachment; filename="transcript.vtt"'
+            ),
+        },
+    )
+
+
+@appServer.get("/api/jobs/{job_id}/transcript.srt")
+def export_transcript_srt(job_id: str):
+    from fastapi.responses import Response
+
+    payload = transcript_payload(load_job(job_id))
+
+    return Response(
+        content=to_srt(payload),
+        media_type="application/x-subrip",
+        headers={
+            "Content-Disposition": (
+                'attachment; filename="transcript.srt"'
+            ),
+        },
+    )
 
 
 @appServer.get("/api/jobs/{job_id}/search")
@@ -381,6 +432,143 @@ def delete_job(job_id: str):
         shutil.rmtree(job_folder(job_id))
 
     return {"status": "deleted"}
+
+@appServer.get("/api/jobs/{job_id}/evidence")
+def export_evidence(job_id: str):
+    """Компактный версионированный JSON с уликами для геопоиска."""
+    job = load_job(job_id)
+    payload = render_evidence_json(job)
+
+    from fastapi.responses import Response
+
+    return Response(
+        content=json.dumps(
+            payload,
+            ensure_ascii=False,
+            indent=2,
+        ),
+        media_type="application/json",
+        headers={
+            "Content-Disposition": (
+                'attachment; filename="evidence.json"'
+            ),
+        },
+    )
+
+
+def _page_bounds(page: int, page_size: int, total: int):
+    page_size = max(1, min(60, page_size))
+    pages = max(1, math.ceil(total / page_size))
+    current = max(1, min(page, pages))
+    start = (current - 1) * page_size
+    return {
+        "page": current,
+        "page_size": page_size,
+        "pages": pages,
+        "total": total,
+        "offset": start,
+    }
+
+
+@appServer.get("/api/jobs/{job_id}/keyframes")
+def paged_keyframes(
+    job_id: str,
+    page: int = 1,
+    page_size: int = 12,
+    group: int | None = None,
+):
+    """
+    Кадры и их локации постранично.
+
+    Без group отдаёт страницу всех кадров и сводку локаций.
+    С group — страницу кадров одной локации.
+    """
+    job = load_job(job_id)
+    stages = job.get("stages") or {}
+    frames = collect_frames(stages)
+    groups = group_frames(
+        frames,
+        scene_intervals(stages),
+    )
+
+    summary = [
+        {
+            "number": item["number"],
+            "start": item["start"],
+            "end": item["end"],
+            "frame_count": len(item["frames"]),
+            "scene_numbers": item.get("scene_numbers") or [],
+        }
+        for item in groups
+    ]
+
+    if group is not None:
+        selected = next(
+            (
+                item
+                for item in groups
+                if item["number"] == group
+            ),
+            None,
+        )
+        selected_frames = (
+            selected["frames"] if selected else []
+        )
+    else:
+        selected_frames = frames
+
+    bounds = _page_bounds(
+        page,
+        page_size,
+        len(selected_frames),
+    )
+    visible = selected_frames[
+        bounds["offset"]:bounds["offset"] + bounds["page_size"]
+    ]
+
+    return {
+        "mode": "group" if group is not None else "all",
+        "group": group,
+        "groups": summary,
+        "frames": visible,
+        **bounds,
+    }
+
+
+@appServer.get("/api/jobs/{job_id}/roads")
+def paged_roads(
+    job_id: str,
+    page: int = 1,
+    page_size: int = 8,
+):
+    """Дорожные эпизоды постранично вместе со схемой."""
+    job = load_job(job_id)
+    stage = (job.get("stages") or {}).get(
+        "road_geometry",
+    ) or {}
+    result = stage.get("result") or {}
+    episodes = [
+        item
+        for item in result.get("episodes") or []
+        if isinstance(item, dict)
+    ]
+
+    bounds = _page_bounds(
+        page,
+        page_size,
+        len(episodes),
+    )
+    visible = episodes[
+        bounds["offset"]:bounds["offset"] + bounds["page_size"]
+    ]
+
+    return {
+        "episodes": visible,
+        "schematic": result.get("schematic") or {},
+        "summary": result.get("summary") or {},
+        **bounds,
+    }
+
 
 @appServer.get("/api/jobs/{job_id}/report")
 def export_markdown_report(job_id: str):

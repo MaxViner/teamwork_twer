@@ -157,6 +157,29 @@ export default function TranscriptPanel({ job, onSeek }) {
                 </span>
             </div>
 
+            <div className="transcript-exports">
+                <a
+                    className="button-link"
+                    href={`/api/jobs/${job.id}/transcript.vtt`}
+                >
+                    Субтитры VTT
+                </a>
+
+                <a
+                    className="button-link"
+                    href={`/api/jobs/${job.id}/transcript.srt`}
+                >
+                    Субтитры SRT
+                </a>
+
+                <a
+                    className="button-link"
+                    href={`/api/jobs/${job.id}/transcript.json`}
+                >
+                    Расшифровка JSON
+                </a>
+            </div>
+
             {hasSpeakers && (
                 <div className="transcript-tools">
                     <div className="insight-chips">

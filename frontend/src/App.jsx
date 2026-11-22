@@ -12,6 +12,7 @@ import SummaryPanel from "./components/SummaryPanel.jsx";
 import StructurePanel from "./components/StructurePanel.jsx";
 import TranscriptPanel from "./components/TranscriptPanel.jsx";
 import GeometryPanel from "./components/GeometryPanel.jsx";
+import FacesPanel from "./components/FacesPanel.jsx";
 import ComprehensionPanel from "./components/ComprehensionPanel.jsx";
 import SearchPanel from "./components/SearchPanel.jsx";
 import { COMBINED_SOURCES } from "./constants/labels.js";
@@ -316,6 +317,14 @@ export default function App() {
                                 </a>
 
 
+                                <a
+                                    className="button-link"
+                                    href={`/api/jobs/${job.id}/evidence`}
+                                >
+                                    Улики JSON
+                                </a>
+
+
                                 <button
                                     className="danger"
                                     disabled={busy}
@@ -351,6 +360,12 @@ export default function App() {
 
 
                     <GeometryPanel
+                        job={job}
+                        onSeek={seek}
+                    />
+
+
+                    <FacesPanel
                         job={job}
                         onSeek={seek}
                     />
