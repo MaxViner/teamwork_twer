@@ -32,7 +32,14 @@ POOL = ThreadPoolExecutor(
     thread_name_prefix="video-analysis",
 )
 
-
+def log_memory(stage: str):
+    process = psutil.Process()
+    print(
+        f"[MEMORY] {stage}: "
+        f"rss={process.memory_info().rss / 1024 / 1024:.1f} MB, "
+        f"threads={process.num_threads()}"
+    )
+    
 def execute(job_id: str, selected: list[str]) -> None:
     try:
         mutate_job(job_id, lambda job: job.update(status="running"))

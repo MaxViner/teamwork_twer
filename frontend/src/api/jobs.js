@@ -19,8 +19,11 @@ export const fetchJobs = () =>
 
 
 
-export const fetchJob = (id) =>
-    request(`/jobs/${id}`);
+export const fetchJob = (id, options = {}) =>
+    request(`/jobs/${id}`, options);
+
+export const fetchJobStatus = (id, options = {}) =>
+    request(`/jobs/${id}/status`, options);
 
 
 export const fetchMapQuery = (id, options = {}) =>

@@ -89,8 +89,42 @@
 
 .filters {
     display: grid;
-    gap: 12px;
-    margin-bottom: 14px;
+    grid-template-columns:
+        minmax(0, 1.5fr)
+        minmax(0, 1fr)
+        minmax(0, 1fr);
+    gap: 10px;
+    align-items: end;
+    margin-bottom: 16px;
+}
+
+
+.filter-field {
+    display: grid;
+    gap: 6px;
+    min-width: 0;
+}
+
+
+.filter-field__label {
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+
+.filter-field input,
+.filter-field select {
+    min-width: 0;
+}
+
+
+@media (max-width: 720px) {
+    .filters {
+        grid-template-columns: minmax(0, 1fr);
+    }
 }
 
 
@@ -261,6 +295,64 @@
     width: 100%;
     height: 100%;
     object-fit: cover;
+}
+
+
+/* Компактная галерея кадров — как в панели «Ориентиры в кадрах». */
+.thumb-grid {
+    display: grid;
+    grid-template-columns:
+        repeat(auto-fill, minmax(min(100%, 230px), 1fr));
+    gap: 10px;
+    margin-top: 16px;
+}
+
+
+.thumb {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    justify-content: flex-start;
+    gap: 0;
+    padding: 0;
+    overflow: hidden;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--bg-soft);
+    text-align: left;
+    cursor: pointer;
+}
+
+
+.thumb:hover {
+    border-color: var(--line-strong);
+}
+
+
+.thumb-media {
+    position: relative;
+    display: block;
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    background: #0a0b0d;
+}
+
+
+.thumb-media img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+
+.thumb-caption {
+    display: block;
+    padding: 8px 10px 10px;
+    color: var(--text-secondary);
+    font-size: 12px;
+    line-height: 1.5;
+    overflow-wrap: anywhere;
 }
 
 

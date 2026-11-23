@@ -1,11 +1,11 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
     createJob,
     deleteJob,
     fetchJob,
+    fetchJobStatus,
     fetchJobs,
 } from "../api/jobs.js";
-
 
 
 const PREPARE_DONE = [
@@ -22,23 +22,38 @@ const JOB_DONE = [
 ];
 
 
-const PREPARE_POLL_MS = 800;
-
+const PREPARE_POLL_MS = 1000;
 const PREPARE_MAX_ERRORS = 10;
 
 
+function wait(ms, signal) {
+    return new Promise((resolve, reject) => {
+        if (signal?.aborted) {
+            reject(new DOMException("Aborted", "AbortError"));
+            return;
+        }
 
-function wait(ms) {
-    return new Promise((resolve) => setTimeout(resolve, ms));
+        const onAbort = () => {
+            clearTimeout(timer);
+            reject(new DOMException("Aborted", "AbortError"));
+        };
+
+        const timer = setTimeout(() => {
+            signal?.removeEventListener("abort", onAbort);
+            resolve();
+        }, ms);
+
+        signal?.addEventListener("abort", onAbort, { once: true });
+    });
 }
 
 
+function prepareState(status) {
+    const stage = status?.stages?.prepare || {};
 
-function prepareState(job) {
-    const stage = job?.stages?.prepare || {};
 
     const percent = (
-        job?.stage_progress?.prepare
+        status?.stage_progress?.prepare
         ?? stage.progress
         ?? null
     );
@@ -53,29 +68,43 @@ function prepareState(job) {
             ),
         message: (
             stage.progress_message
-            || job?.progress
+            || status?.progress
             || ""
         ),
         stageStatus: stage.status || "",
-        jobStatus: job?.status || "",
+        jobStatus: status?.status || "",
     };
 }
 
 
-
-async function followPreparation(jobId, onUpdate) {
+async function followPreparation(
+    jobId,
+    onUpdate,
+    signal,
+) {
     let errors = 0;
 
 
-    while (true) {
-        let job;
+    while (!signal.aborted) {
+        let status;
+
 
         try {
-            job = await fetchJob(jobId);
+            status = await fetchJobStatus(
+                jobId,
+                { signal },
+            );
+
 
             errors = 0;
 
+
         } catch (error) {
+            if (error.name === "AbortError") {
+                throw error;
+            }
+
+
             errors += 1;
 
 
@@ -84,13 +113,18 @@ async function followPreparation(jobId, onUpdate) {
             }
 
 
-            await wait(PREPARE_POLL_MS);
+            await wait(
+                PREPARE_POLL_MS,
+                signal,
+            );
+
 
             continue;
         }
 
 
-        const state = prepareState(job);
+        const state = prepareState(status);
+
 
         onUpdate(state);
 
@@ -99,42 +133,38 @@ async function followPreparation(jobId, onUpdate) {
             PREPARE_DONE.includes(state.stageStatus)
             || JOB_DONE.includes(state.jobStatus)
         ) {
-            return job;
+            return status;
         }
 
 
-        await wait(PREPARE_POLL_MS);
+        await wait(
+            PREPARE_POLL_MS,
+            signal,
+        );
     }
-}
 
+
+    throw new DOMException("Aborted", "AbortError");
+}
 
 
 export function useJobs({ onError }) {
     const [jobs, setJobs] = useState([]);
-
     const [selectedId, setSelectedId] = useState("");
-
     const [uploading, setUploading] = useState(false);
-
     const [uploadProgress, setUploadProgress] = useState(null);
-
     const [preparing, setPreparing] = useState(false);
-
     const [prepareProgress, setPrepareProgress] = useState(null);
-
     const [prepareMessage, setPrepareMessage] = useState("");
 
+    const activePreparation = useRef(null);
 
 
     const loadJobs = useCallback(async () => {
         const items = await fetchJobs();
-
         setJobs(items);
-
         return items;
-
     }, []);
-
 
 
     const upload = useCallback(async ({
@@ -146,11 +176,19 @@ export function useJobs({ onError }) {
         }
 
 
+        activePreparation.current?.abort();
+
+
+        const controller = new AbortController();
+        activePreparation.current = controller;
+
+
         setUploading(true);
         setUploadProgress(0);
         setPreparing(false);
         setPrepareProgress(null);
         setPrepareMessage("");
+
 
         try {
             const result = await createJob({
@@ -159,15 +197,20 @@ export function useJobs({ onError }) {
                 onProgress: setUploadProgress,
             });
 
-            await loadJobs();
 
+            await loadJobs();
             setSelectedId(result.id);
+
 
             setUploading(false);
             setUploadProgress(null);
 
+
             setPreparing(true);
-            setPrepareMessage("Задание создано, жду начала подготовки");
+            setPrepareMessage(
+                "Задание создано, жду начала подготовки",
+            );
+
 
             try {
                 await followPreparation(
@@ -175,11 +218,14 @@ export function useJobs({ onError }) {
                     (state) => {
                         setPrepareProgress(state.percent);
 
+
                         if (state.message) {
                             setPrepareMessage(state.message);
                         }
                     },
+                    controller.signal,
                 );
+
 
             } finally {
                 setPreparing(false);
@@ -187,30 +233,53 @@ export function useJobs({ onError }) {
                 setPrepareMessage("");
             }
 
+
             return result;
 
+
+        } catch (error) {
+            if (error.name !== "AbortError") {
+                throw error;
+            }
+
+
+            return null;
+
+
         } finally {
+            if (activePreparation.current === controller) {
+                activePreparation.current = null;
+            }
+
+
             setUploading(false);
             setUploadProgress(null);
-
             setPreparing(false);
             setPrepareProgress(null);
             setPrepareMessage("");
         }
 
-    }, [loadJobs]);
 
+    }, [loadJobs]);
 
 
     const remove = useCallback(async (jobId) => {
+        activePreparation.current?.abort();
+        activePreparation.current = null;
+
+
         await deleteJob(jobId);
-
         await loadJobs();
-
         setSelectedId("");
-
     }, [loadJobs]);
 
+
+    useEffect(() => {
+        return () => {
+            activePreparation.current?.abort();
+            activePreparation.current = null;
+        };
+    }, []);
 
 
     useEffect(() => {
@@ -222,8 +291,8 @@ export function useJobs({ onError }) {
             })
             .catch((error) => onError(error.message));
 
-    }, [loadJobs, onError]);
 
+    }, [loadJobs, onError]);
 
 
     return {

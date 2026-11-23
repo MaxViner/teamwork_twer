@@ -37,7 +37,7 @@ def extract_ocr(
 ) -> dict:
     from PIL import Image
 
-    from app.media.ffmpeg import extract_frame
+    from app.services.mediaService.ffmpeg import extract_frame
 
     count = analysis_frame_count(options)
     times = select_timestamps(duration, count, stages)

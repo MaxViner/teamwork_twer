@@ -1,5 +1,5 @@
-import { fileUrl } from "../utils/fileUrl.js";
-import { formatTime } from "../utils/formatTime.js";
+import { fileUrl } from "../../utils/fileUrl.js";
+import { formatTime } from "../../utils/formatTime.js";
 
 export default function VideoPlayer({ jobId, preview, duration, currentTime, videoRef, onSeek, onTimeUpdate }) {
   return (

@@ -1,8 +1,12 @@
-import { useEffect, useState } from "react";
-import Button from "./ui/Button.jsx";
-import { SOURCE_LABELS, REVIEW_LABELS } from "../constants/labels.js";
-import { fileUrl } from "../utils/fileUrl.js";
-import { formatTime } from "../utils/formatTime.js";
+import { useEffect, useMemo, useState } from "react";
+import Button from "../ui/Button.jsx";
+import FrameGallery from "../ui/FrameGallery.jsx";
+import { SOURCE_LABELS, REVIEW_LABELS } from "../../constants/labels.js";
+import { fileUrl } from "../../utils/fileUrl.js";
+import { formatTime } from "../../utils/formatTime.js";
+
+
+const EMPTY_SEGMENTS = [];
 
 export default function Finding({ item, jobId, busy, onSeek, onSave, onError }) {
   const [text, setText] = useState(item.corrected_text ?? item.text);
@@ -24,11 +28,11 @@ export default function Finding({ item, jobId, busy, onSeek, onSave, onError }) 
 
   const speechSegments = item.source === "speech" && Array.isArray(item.data?.segments)
     ? item.data.segments
-    : [];
+    : EMPTY_SEGMENTS;
 
   const segments = Array.isArray(item.data?.segments)
     ? item.data.segments
-    : [];
+    : EMPTY_SEGMENTS;
 
   const grouped = segments.length > 0;
   const groupedSpeech = speechSegments.length > 0;
@@ -43,6 +47,38 @@ export default function Finding({ item, jobId, busy, onSeek, onSave, onError }) 
     return rest;
   })();
 
+  const galleryFrames = useMemo(() => {
+    const seen = new Set();
+    const frames = [];
+
+    const add = (artifact, timestamp) => {
+      if (
+        !artifact
+        || !/\.(jpg|jpeg|png)$/i.test(artifact)
+        || seen.has(artifact)
+      ) {
+        return;
+      }
+
+      seen.add(artifact);
+      frames.push({
+        artifact,
+        timestamp: Number(timestamp) || 0,
+      });
+    };
+
+    add(item.data?.first_artifact, item.data?.first_time);
+    add(item.data?.second_artifact, item.data?.second_time);
+
+    for (const segment of segments) {
+      add(segment.artifact, segment.start);
+    }
+
+    add(item.artifact, item.end ?? item.start);
+
+    return frames;
+  }, [item, segments]);
+
   const save = async () => {
     setSaving(true);
     try { await onSave(item.id, { text, review }); } catch (error) { onError(error.message); } finally { setSaving(false); }
@@ -55,7 +91,26 @@ export default function Finding({ item, jobId, busy, onSeek, onSave, onError }) 
         <button className="time-button" onClick={() => onSeek(item.start)}>{formatTime(item.start)}{item.end > item.start ? ` — ${formatTime(item.end)}` : ""}</button>
       </header>
 
-      {isImage && <a href={fileUrl(jobId, item.artifact)} target="_blank" rel="noreferrer"><img className="crop" src={fileUrl(jobId, item.artifact)} alt={`Фрагмент: ${item.text}`} loading="lazy" /></a>}
+      {galleryFrames.length > 1 ? (
+        <FrameGallery
+          jobId={jobId}
+          frames={galleryFrames}
+          onSeek={onSeek}
+        />
+      ) : galleryFrames.length === 1 ? (
+        <a
+          href={fileUrl(jobId, galleryFrames[0].artifact)}
+          target="_blank"
+          rel="noreferrer"
+        >
+          <img
+            className="crop"
+            src={fileUrl(jobId, galleryFrames[0].artifact)}
+            alt={`Фрагмент: ${item.text}`}
+            loading="lazy"
+          />
+        </a>
+      ) : null}
 
       {grouped && (
         <div className="segment-block">
@@ -73,12 +128,6 @@ export default function Finding({ item, jobId, busy, onSeek, onSave, onError }) 
                 <button className="time-button segment-time" onClick={() => onSeek(segment.start)}>
                   {formatTime(segment.start)}{segment.end > segment.start ? `–${formatTime(segment.end)}` : ""}
                 </button>
-
-                {segment.artifact && /\.(jpg|jpeg|png)$/i.test(segment.artifact) && (
-                  <button className="segment-thumb" onClick={() => onSeek(segment.start)} title="Перейти к кадру">
-                    <img src={fileUrl(jobId, segment.artifact)} alt={`Кадр ${formatTime(segment.start)}`} loading="lazy" />
-                  </button>
-                )}
 
                 <span className="segment-line">{segment.text}</span>
               </li>

@@ -15,7 +15,9 @@ const KIND_LABELS = {
 
 export default function ComprehensionPanel({ job, onSeek }) {
     const result = job?.stages?.comprehension?.result;
-    const questions = Array.isArray(result?.questions) ? result.questions : [];
+    const questions = Array.isArray(result?.questions)
+        ? result.questions.filter((item) => item.kind !== "structure")
+        : [];
     const [open, setOpen] = useState({});
 
     useEffect(() => {

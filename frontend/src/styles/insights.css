@@ -601,3 +601,194 @@
     margin-top: 12px;
 }
 
+
+
+/* Inspection layout: video stays visible while user compares timed clues. */
+html {
+  scroll-behavior: smooth;
+}
+
+.inspection-shell {
+  display: grid;
+  /* Ровно 50/50: видео слева, наблюдения справа, без выхода за экран. */
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 1rem;
+  align-items: start;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.inspection-shell > * {
+  min-width: 0;
+}
+
+.inspection-shell__video {
+  position: sticky;
+  top: 1rem;
+  align-self: start;
+  z-index: 5;
+  min-width: 0;
+}
+
+.inspection-shell__content {
+  min-width: 0;
+  display: grid;
+  gap: 1rem;
+  padding-bottom: 5.5rem;
+}
+
+.section-anchor-wrap {
+  scroll-margin-top: 1rem;
+}
+
+.section-anchor-wrap:empty {
+  display: none;
+}
+
+.footer-nav {
+  position: fixed;
+  left: 50%;
+  bottom: .75rem;
+  transform: translateX(-50%);
+  z-index: 40;
+  width: min(1120px, calc(100vw - 1rem));
+  pointer-events: none;
+}
+
+.footer-nav__inner {
+  pointer-events: auto;
+  display: flex;
+  gap: .45rem;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  padding: .55rem;
+  border: 1px solid rgba(130, 150, 185, .28);
+  border-radius: 999px;
+  background: rgba(10, 14, 22, .9);
+  backdrop-filter: blur(16px);
+  box-shadow: 0 10px 34px rgba(0, 0, 0, .35);
+}
+
+.footer-nav__item {
+  flex: 0 0 auto;
+  border: 1px solid rgba(130, 150, 185, .2);
+  background: rgba(255, 255, 255, .035);
+  color: inherit;
+  border-radius: 999px;
+  padding: .5rem .78rem;
+  font-size: .86rem;
+  cursor: pointer;
+}
+
+.footer-nav__item:hover,
+.footer-nav__item.is-active {
+  border-color: rgba(90, 125, 255, .65);
+  background: rgba(90, 125, 255, .2);
+}
+
+.footer-nav__item--top {
+  margin-left: auto;
+  border-color: rgba(255, 138, 61, .45);
+  background: rgba(255, 138, 61, .14);
+  color: var(--text);
+  font-weight: 600;
+}
+
+.footer-nav__item--top:hover {
+  border-color: rgba(255, 138, 61, .75);
+  background: rgba(255, 138, 61, .24);
+}
+
+.clue-panel .muted {
+  max-width: 60rem;
+}
+
+.clue-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: .7rem;
+}
+
+.clue-card {
+  display: grid;
+  gap: .25rem;
+  text-align: left;
+  padding: .75rem;
+  border: 1px solid rgba(130, 150, 185, .22);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, .035);
+  color: inherit;
+  cursor: pointer;
+}
+
+.clue-card strong {
+  font-size: 1rem;
+}
+
+.clue-card small,
+.clue-card__times {
+  color: var(--muted, #9aa6b2);
+}
+
+.clue-card__times {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .3rem;
+  font-size: .82rem;
+}
+
+.clue-frame-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: .7rem;
+}
+
+.clue-frame {
+  display: grid;
+  gap: .35rem;
+  text-align: left;
+  padding: .45rem;
+  border: 1px solid rgba(130, 150, 185, .2);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, .03);
+  color: inherit;
+  cursor: pointer;
+}
+
+.clue-frame img {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  border-radius: 7px;
+}
+
+.clue-frame span {
+  color: var(--accent, #7aa2ff);
+  font-size: .85rem;
+}
+
+@media (max-width: 1180px) {
+  .inspection-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .inspection-shell__video {
+    top: .5rem;
+  }
+
+  .section-anchor-wrap {
+    scroll-margin-top: 4.75rem;
+  }
+}
+
+
+.inspection-shell__video .player-panel {
+  max-height: calc(100vh - 2rem);
+  overflow: auto;
+}
+
+.inspection-shell__video video {
+  max-height: min(52vh, 520px);
+  object-fit: contain;
+}

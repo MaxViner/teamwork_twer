@@ -16,9 +16,8 @@ export default function RoadEpisodes({
     openId,
     filtered,
     pageSize,
-    changePage,
-    changeFilter,
-    changeWithClues,
+    setFilter: changeFilter,
+    setWithClues: changeWithClues,
     setOpenId,
   } = useRoadEpisodes(episodes);
 
@@ -26,6 +25,21 @@ export default function RoadEpisodes({
     filtered.length,
     pageSize,
   );
+
+  const changePage = (next) => {
+    pagination.setPage(next);
+    setOpenId(null);
+  };
+
+  const applyFilter = (value) => {
+    changeFilter(value);
+    pagination.setPage(0);
+  };
+
+  const applyWithClues = (value) => {
+    changeWithClues(value);
+    pagination.setPage(0);
+  };
 
   const visibleEpisodes = filtered.slice(
     pagination.first,
@@ -36,9 +50,9 @@ export default function RoadEpisodes({
     <>
       <RoadEpisodeFilters
         filter={filter}
-        onFilterChange={changeFilter}
+        onFilterChange={applyFilter}
         withClues={withClues}
-        onWithCluesChange={changeWithClues}
+        onWithCluesChange={applyWithClues}
         shown={filtered.length}
         total={episodes.length}
       />
@@ -69,7 +83,7 @@ export default function RoadEpisodes({
       {visibleEpisodes.map((episode) => (
         <RoadEpisodeRow
           key={episode.id}
-          job={job}
+          jobId={job?.id}
           episode={episode}
           segments={segments}
           onSeek={onSeek}

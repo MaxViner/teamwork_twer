@@ -192,6 +192,25 @@ def get_job(job_id: str):
     return job
 
 
+@appServer.get("/api/jobs/{job_id}/status")
+def get_job_status(job_id: str):
+    """Small wire payload. Full job is fetched only when its revision changes.
+
+    Current storage is one JSON document; load_job still parses it server-side.
+    A dedicated status sidecar is required to avoid that backend cost.
+    """
+    job = load_job(job_id)
+    return {"id": job["id"], "status": job.get("status"),
+            "progress": job.get("progress"),
+            "updated_at": job.get("updated_at"),
+            "stage_progress": job.get("stage_progress", {}),
+            "stages": {name: {"status": stage.get("status"),
+                               "progress": stage.get("progress"),
+                               "progress_message": stage.get("progress_message"),
+                               "result_run_id": stage.get("result_run_id")}
+                       for name, stage in (job.get("stages") or {}).items()}}
+
+
 @appServer.get("/api/jobs/{job_id}/map-query")
 def get_map_query(job_id: str):
     """Return compact, source-linked map-search hypotheses; never coordinates."""

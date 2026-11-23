@@ -3,6 +3,170 @@
 }
 
 
+/* Сетка карточек ключевых кадров: превью 16:9 + краткая сводка. */
+.keyframe-list {
+    display: grid;
+    grid-template-columns:
+        repeat(auto-fill, minmax(min(100%, 340px), 1fr));
+    gap: 12px;
+    margin-top: 12px;
+}
+
+
+.keyframe-card {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    overflow: hidden;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: var(--bg-soft);
+}
+
+
+.keyframe-thumb {
+    position: relative;
+    display: block;
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    padding: 0;
+    overflow: hidden;
+    border: 0;
+    border-radius: 0;
+    background: #0a0b0d;
+    cursor: pointer;
+}
+
+
+.keyframe-thumb img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    transition: transform 180ms ease;
+}
+
+
+.keyframe-thumb:hover img {
+    transform: scale(1.04);
+}
+
+
+.keyframe-time {
+    position: absolute;
+    left: 6px;
+    bottom: 6px;
+    padding: 2px 6px;
+    border-radius: 6px;
+    background: rgba(8, 9, 11, 0.78);
+    color: #f4f6f8;
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+}
+
+
+.keyframe-body {
+    display: grid;
+    gap: 7px;
+    padding: 10px 12px 12px;
+}
+
+
+.keyframe-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 6px;
+}
+
+
+.keyframe-head strong {
+    font-size: 13px;
+}
+
+
+.keyframe-scene {
+    color: var(--muted);
+    font-size: 11px;
+}
+
+
+.keyframe-row {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    min-width: 0;
+    color: var(--text-secondary);
+    font-size: 12px;
+}
+
+
+.keyframe-label {
+    flex: 0 0 auto;
+    color: var(--muted);
+    font-size: 11px;
+}
+
+
+.keyframe-text {
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+
+.keyframe-metrics {
+    margin: 0;
+}
+
+
+.keyframe-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+}
+
+
+.keyframe-chip {
+    padding: 2px 7px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--text-secondary);
+    font-size: 11px;
+}
+
+
+.keyframe-speech {
+    display: grid;
+    gap: 4px;
+    min-width: 0;
+}
+
+
+.keyframe-speech-row {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    min-width: 0;
+}
+
+
+.keyframe-speech-time {
+    flex: 0 0 auto;
+    color: var(--accent-strong);
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+}
+
+
+@media (max-width: 640px) {
+    .keyframe-list {
+        grid-template-columns: minmax(0, 1fr);
+    }
+}
+
+
 .kf-total {
     color: var(--muted);
     font-size: 13px;
