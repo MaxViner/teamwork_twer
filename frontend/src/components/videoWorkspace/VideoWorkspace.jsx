@@ -10,7 +10,7 @@ export default function VideoWorkspace({ job, observations, currentTime, videoRe
 
   return (
     <section className="panel player-panel">
-      <h2>Видео — всегда в кадре</h2>
+      <h2>Исследуемое видео</h2>
       {preview ? (
         <>
           <VideoPlayer jobId={job.id} preview={preview} duration={duration} currentTime={currentTime} videoRef={videoRef} onSeek={onSeek} onTimeUpdate={onTimeUpdate} />

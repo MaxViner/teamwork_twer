@@ -1,0 +1,512 @@
+/* ═══════════════════════════════════════════════════════════════════
+   ЭТАПЫ ОБРАБОТКИ — базовые карточки
+   ═══════════════════════════════════════════════════════════════════ */
+
+.stage-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    margin-top: 24px;
+}
+
+.stage-grid > .stage,
+.stage-accordion__body > .stage {
+    display: flex;
+    align-items: flex-start;
+    gap: 18px;
+    width: 100%;
+    min-width: 0;
+    padding: 22px;
+    border: 1px solid var(--line);
+    border-radius: 18px;
+    background:
+        linear-gradient(
+            155deg,
+            rgba(255, 255, 255, 0.05),
+            rgba(255, 255, 255, 0.012)
+        ),
+        var(--paper);
+    box-shadow: var(--shadow-sm);
+
+    transition:
+        background-color 180ms ease,
+        border-color 180ms ease,
+        box-shadow 180ms ease;
+}
+
+.stage-grid > .stage:hover,
+.stage-accordion__body > .stage:hover {
+    border-color: var(--line-strong);
+    box-shadow: var(--shadow-md);
+}
+
+.stage-indicator {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 44px;
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    color: var(--text-secondary);
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid var(--line);
+}
+
+.stage-status-icon {
+    display: block;
+    width: 24px;
+    height: 24px;
+}
+
+.stage-content {
+    flex: 1;
+    min-width: 0;
+}
+
+.stage-heading {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 14px;
+}
+
+.stage-heading h3 {
+    margin: 0 0 5px;
+    color: #ffffff;
+    font-size: 16px;
+    line-height: 1.4;
+}
+
+.stage-status-label {
+    display: block;
+    color: var(--muted);
+    font-size: 13px;
+    line-height: 1.5;
+}
+
+.stage-percent {
+    flex-shrink: 0;
+    color: var(--accent-strong);
+    font-size: 14px;
+    font-weight: 700;
+    line-height: 1.5;
+    font-variant-numeric: tabular-nums;
+}
+
+.stage-grid .stage-operation,
+.stage-grid .stage-note,
+.stage-grid .stage-error,
+.stage-accordion__body .stage-operation,
+.stage-accordion__body .stage-note,
+.stage-accordion__body .stage-error {
+    display: block;
+    margin: 10px 0 0;
+    font-size: 12px;
+    line-height: 1.6;
+    overflow-wrap: anywhere;
+}
+
+.stage-operation,
+.stage-note {
+    color: var(--text-secondary);
+}
+
+.stage-error {
+    color: #ffb3b3;
+    white-space: pre-wrap;
+}
+
+.stage-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-top: 18px;
+    padding-top: 14px;
+    border-top: 1px solid var(--line);
+    width: auto;
+    background: transparent;
+}
+
+.stage-counts {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 16px;
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.5;
+}
+
+.stage-grid .stage button,
+.stage-accordion__body .stage button {
+    margin: 0;
+}
+
+/* ─────────── статусы карточки ─────────── */
+
+.stage-grid > .stage.status-running,
+.stage-accordion__body > .stage.status-running {
+    border-color: var(--accent-border);
+    background:
+        linear-gradient(
+            155deg,
+            rgba(255, 138, 61, 0.11),
+            rgba(255, 255, 255, 0.015)
+        ),
+        var(--paper);
+    box-shadow: var(--shadow-accent);
+}
+
+.status-running .stage-indicator {
+    color: var(--accent);
+    background: var(--accent-soft);
+    border-color: var(--accent-border);
+}
+
+.stage-spinner {
+    display: block;
+    width: 23px;
+    height: 23px;
+    border: 3px solid rgba(255, 138, 61, 0.22);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: stage-spin 850ms linear infinite;
+}
+
+@keyframes stage-spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+.stage-grid > .stage.status-completed,
+.stage-accordion__body > .stage.status-completed {
+    border-color: var(--success-border);
+    background:
+        linear-gradient(
+            155deg,
+            rgba(67, 197, 138, 0.09),
+            rgba(255, 255, 255, 0.015)
+        ),
+        var(--paper);
+}
+
+.status-completed .stage-indicator {
+    color: var(--success);
+    background: var(--success-soft);
+    border-color: var(--success-border);
+}
+
+.status-completed .stage-status-label,
+.status-completed .stage-percent {
+    color: var(--success);
+}
+
+.stage-grid > .stage.status-failed,
+.stage-accordion__body > .stage.status-failed {
+    border-color: var(--danger-border);
+    background:
+        linear-gradient(
+            155deg,
+            rgba(255, 107, 107, 0.09),
+            rgba(255, 255, 255, 0.015)
+        ),
+        var(--paper);
+}
+
+.status-failed .stage-indicator {
+    color: var(--danger);
+    background: var(--danger-soft);
+    border-color: var(--danger-border);
+}
+
+.status-failed .stage-status-label,
+.status-failed .stage-percent {
+    color: var(--danger);
+}
+
+.stage-grid > .stage.status-skipped,
+.stage-accordion__body > .stage.status-skipped {
+    background: rgba(255, 255, 255, 0.025);
+}
+
+.status-skipped .stage-indicator {
+    color: var(--muted);
+    background: rgba(255, 255, 255, 0.04);
+}
+
+/* ─────────── прогресс-бар ─────────── */
+
+.stage-grid .stage-progress-bar,
+.stage-accordion__body .stage-progress-bar {
+    display: block;
+    width: 100%;
+    height: 9px;
+    margin: 0;
+    border-radius: 999px;
+    overflow: hidden;
+    background: rgba(255, 255, 255, 0.08);
+}
+
+.stage-progress-fill {
+    display: block;
+    height: 100%;
+    width: 0;
+    border-radius: 999px;
+    background: linear-gradient(90deg, #ff7a24, #ffb06a);
+    transition: width 320ms ease;
+}
+
+.stage-progress-bar.is-indeterminate .stage-progress-fill {
+    width: 34%;
+    animation: stage-progress-slide 1.15s ease-in-out infinite;
+}
+
+@keyframes stage-progress-slide {
+    from { transform: translateX(-110%); }
+    to   { transform: translateX(310%); }
+}
+
+.status-completed .stage-progress-fill {
+    background: linear-gradient(90deg, #2fa36c, #5fe0a2);
+}
+
+.status-failed .stage-progress-fill {
+    background: linear-gradient(90deg, #d94f4f, #ff8a80);
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   АККОРДЕОН ЭТАПОВ
+   ═══════════════════════════════════════════════════════════════════ */
+
+.stages-panel__header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 14px;
+}
+
+.stages-panel__header h3 {
+    margin: 0;
+}
+
+.stages-panel__actions {
+    display: flex;
+    gap: 6px;
+}
+
+.stage-accordion {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.stage-accordion__item {
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    overflow: hidden;
+    background: var(--paper);
+    box-shadow: var(--shadow-sm);
+    transition:
+        border-color 180ms ease,
+        box-shadow 180ms ease;
+}
+
+.stage-accordion__item:hover {
+    border-color: var(--line-strong);
+}
+
+/* ─────────── шапка (всегда видна) ─────────── */
+
+.stage-accordion__header {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 14px 18px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 0;
+    cursor: pointer;
+    font: inherit;
+    font-weight: 500;
+    text-align: left;
+    color: inherit;
+    transition: background-color 180ms ease;
+}
+
+.stage-accordion__header:hover {
+    background: rgba(255, 255, 255, 0.06);
+}
+
+.stage-accordion__header:focus-visible {
+    outline: 2px solid var(--accent-border);
+    outline-offset: -2px;
+}
+
+.stage-accordion__title {
+    flex: 1;
+    color: #ffffff;
+    font-size: 15px;
+    line-height: 1.4;
+}
+
+.stage-accordion__meta {
+    color: var(--muted);
+    font-size: 13px;
+    font-weight: 400;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+}
+
+.stage-accordion__chevron {
+    flex-shrink: 0;
+    width: 14px;
+    font-size: 13px;
+    color: var(--muted);
+    text-align: center;
+    transition: color 150ms ease;
+}
+
+.stage-accordion__header:hover .stage-accordion__chevron {
+    color: var(--accent);
+}
+
+/* ─────────── тело (раскрытое) ─────────── */
+
+.stage-accordion__body {
+    border-top: 1px solid var(--line);
+    background: transparent;
+}
+
+/* Снимаем «карточный» хром внутри аккордеона: шапка уже несёт статус,
+   тело — просто детали. */
+.stage-accordion__body > .stage {
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+    padding: 18px;
+}
+
+.stage-accordion__body > .stage:hover {
+    border-color: transparent;
+    box-shadow: none;
+}
+
+/* Сбрасываем цветные фоны статусов внутри аккордеона — шапка уже
+   показывает статус цветом и индикатором. */
+.stage-accordion__body > .stage.status-running,
+.stage-accordion__body > .stage.status-completed,
+.stage-accordion__body > .stage.status-failed,
+.stage-accordion__body > .stage.status-skipped {
+    background: transparent;
+    box-shadow: none;
+}
+
+/* ─────────── статусные акценты на шапке ─────────── */
+
+.stage-accordion__item--running {
+    border-color: var(--accent-border);
+    box-shadow: var(--shadow-accent);
+}
+
+.stage-accordion__item--running .stage-accordion__header {
+    background: linear-gradient(
+        155deg,
+        rgba(255, 138, 61, 0.11),
+        rgba(255, 255, 255, 0.015)
+    );
+}
+
+.stage-accordion__item--running .stage-accordion__meta {
+    color: var(--accent-strong);
+}
+
+.stage-accordion__item--completed {
+    border-color: var(--success-border);
+}
+
+.stage-accordion__item--completed .stage-accordion__header {
+    background: linear-gradient(
+        155deg,
+        rgba(67, 197, 138, 0.09),
+        rgba(255, 255, 255, 0.015)
+    );
+}
+
+.stage-accordion__item--completed .stage-accordion__meta {
+    color: var(--success);
+}
+
+.stage-accordion__item--failed {
+    border-color: var(--danger-border);
+}
+
+.stage-accordion__item--failed .stage-accordion__header {
+    background: linear-gradient(
+        155deg,
+        rgba(255, 107, 107, 0.09),
+        rgba(255, 255, 255, 0.015)
+    );
+}
+
+.stage-accordion__item--failed .stage-accordion__meta {
+    color: var(--danger);
+}
+
+.stage-accordion__item--skipped .stage-accordion__header {
+    background: rgba(255, 255, 255, 0.02);
+}
+
+/* ─────────── компактный индикатор статуса в шапке ─────────── */
+
+.stage-status {
+    flex-shrink: 0;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.25);
+    box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.04);
+}
+
+.stage-status--running {
+    background: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-soft);
+    animation: stage-pulse 1.2s ease-in-out infinite;
+}
+
+.stage-status--completed {
+    background: var(--success);
+    box-shadow: 0 0 0 3px var(--success-soft);
+}
+
+.stage-status--failed {
+    background: var(--danger);
+    box-shadow: 0 0 0 3px var(--danger-soft);
+}
+
+.stage-status--skipped {
+    background: var(--muted);
+}
+
+@keyframes stage-pulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50%      { opacity: 0.55; transform: scale(0.85); }
+}
+
+/* ─────────── опционально: скрыть дубликат заголовка в раскрытом теле ───────────
+   В шапке аккордеона уже есть название, статус и процент. Если не хотите
+   видеть их второй раз в StageCard, раскомментируйте:
+*/
+/*
+.stage-accordion__body .stage-indicator,
+.stage-accordion__body .stage-heading h3,
+.stage-accordion__body .stage-status-label,
+.stage-accordion__body .stage-percent {
+    display: none;
+}
+*/

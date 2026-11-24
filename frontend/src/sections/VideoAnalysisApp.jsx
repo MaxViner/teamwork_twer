@@ -56,6 +56,7 @@ export default function VideoAnalysisApp() {
                         video={state.video}
                         onSave={state.actions.handleSave}
                         onError={state.onError}
+                        onRetry={state.actions.handleRetry}
                     />
 
                     <FooterNav sections={ANALYSIS_SECTIONS} />

@@ -115,3 +115,149 @@
         grid-template-columns: 1fr;
     }
 }
+
+
+/* AI-описание объекта: кнопка по запросу и разбор ответа. */
+
+.ai-description {
+    display: grid;
+    gap: 10px;
+    margin-top: 4px;
+    padding-top: 10px;
+    border-top: 1px dashed var(--line);
+}
+
+
+.ai-description__actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+
+.ai-description__actions button {
+    padding: 7px 12px;
+    font-size: 12px;
+}
+
+
+.ai-description__meta {
+    color: var(--text-secondary);
+    font-size: 11px;
+    overflow-wrap: anywhere;
+}
+
+
+.ai-description__error {
+    margin: 0;
+    color: #ffb4b4;
+    font-size: 12px;
+    overflow-wrap: anywhere;
+}
+
+
+.ai-description__hint {
+    margin: 0;
+    font-size: 12px;
+}
+
+
+.ai-description__body {
+    display: grid;
+    gap: 10px;
+}
+
+
+.ai-description__identification {
+    margin: 0;
+    font-size: 13px;
+}
+
+
+.ai-description__identification span {
+    color: var(--text-secondary);
+}
+
+
+.ai-description__summary {
+    margin: 0;
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+
+
+.ai-description__block {
+    display: grid;
+    gap: 6px;
+}
+
+
+.ai-description__block h4 {
+    margin: 0;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-secondary);
+}
+
+
+.ai-description__chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+
+.ai-description__chip {
+    padding: 4px 9px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    font-size: 11px;
+    color: var(--text-secondary);
+    overflow-wrap: anywhere;
+}
+
+
+.ai-description__hypotheses,
+.ai-description__sources {
+    display: grid;
+    gap: 6px;
+    margin: 0;
+    padding-left: 18px;
+    font-size: 12px;
+}
+
+
+.ai-description__hypotheses li {
+    overflow-wrap: anywhere;
+}
+
+
+.ai-description__confidence {
+    margin-left: 6px;
+    padding: 1px 7px;
+    border-radius: 999px;
+    background: rgba(255, 138, 61, 0.16);
+    color: var(--accent);
+    font-size: 11px;
+}
+
+
+.ai-description__sources a {
+    overflow-wrap: anywhere;
+}
+
+
+.ai-description__web summary {
+    cursor: pointer;
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+
+
+.ai-description__web p {
+    margin: 6px 0 0;
+    font-size: 12px;
+    white-space: pre-wrap;
+}

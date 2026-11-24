@@ -1,4 +1,5 @@
 import LocationDossier from "../components/LocationDossier.jsx";
+import AiPromptPanel from "../components/aiPromptPanel/AiPromptPanel.jsx";
 import MapQueryPanel from "../components/mapQueryPanel/MapQueryPanel.jsx";
 import LandmarksPanel from "../components/LandmarksPanel.jsx";
 import KeyFramesPanel from "../components/keyFrames/KeyFramesPanel.jsx";
@@ -6,8 +7,6 @@ import GeometryPanel from "../components/geometryPanel/GeometryPanel.jsx";
 import SummaryPanel from "../components/SummaryPanel.jsx";
 import StructurePanel from "../components/StructurePanel.jsx";
 import TranscriptPanel from "../components/TranscriptPanel.jsx";
-import SearchPanel from "../components/SearchPanel.jsx";
-import ComprehensionPanel from "../components/ComprehensionPanel.jsx";
 import FacesPanel from "../components/FacesPanel.jsx";
 
 function Section({ id, children }) {
@@ -22,9 +21,14 @@ export default function AnalysisSections({
     job,
     onSeek,
     onError,
+    onRetry,
 }) {
     return (
         <>
+            <Section id="section-ai-prompt">
+                <AiPromptPanel job={job} onRetry={onRetry} />
+            </Section>
+
             <Section id="section-dossier">
                 <LocationDossier job={job} />
             </Section>
@@ -55,14 +59,6 @@ export default function AnalysisSections({
 
             <Section id="section-transcript">
                 <TranscriptPanel job={job} onSeek={onSeek} />
-            </Section>
-
-            <Section id="section-search">
-                <SearchPanel job={job} onSeek={onSeek} onError={onError} />
-            </Section>
-
-            <Section id="section-questions">
-                <ComprehensionPanel job={job} onSeek={onSeek} />
             </Section>
 
             <Section id="section-faces">

@@ -1,4 +1,4 @@
-import StageGrid from "../components/StageGrid.jsx";
+import StageGrid from "../components/stagesPanel/StagePanel";
 
 export default function JobStatusSection({ job, busy, onRetry, onRemove }) {
     if (!job) return null;

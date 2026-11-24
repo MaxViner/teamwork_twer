@@ -35,6 +35,7 @@ class AnalyzeOptions(BaseModel):
     video_structure: bool = True
     comprehension: bool = True
     landmarks: bool = True
+    ai_prompt: bool = True
 
 
 
@@ -91,6 +92,7 @@ class Observation(BaseModel):
         "video_structure",
         "comprehension",
         "landmarks",
+        "ai_prompt",
     ]
 
 

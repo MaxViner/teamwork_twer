@@ -136,6 +136,7 @@ export default function UploadPanel({
                                 file,
                                 options,
                             });
+                            setIsExpanded(false);
                         }}
                     >
                         <input

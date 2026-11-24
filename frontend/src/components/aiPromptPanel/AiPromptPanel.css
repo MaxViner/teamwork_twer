@@ -1,0 +1,45 @@
+.ai-prompt-panel__badge {
+    align-self: flex-start;
+    padding: 6px 12px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    color: var(--text-secondary);
+    font-size: 12px;
+    white-space: nowrap;
+    overflow-wrap: anywhere;
+}
+
+
+.ai-prompt-panel__actions {
+    display: flex;
+    gap: 10px;
+    margin: 14px 0 10px;
+}
+
+
+.ai-prompt-panel__text {
+    margin: 0;
+    padding: 16px;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.03);
+    font-family: inherit;
+    font-size: 13px;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
+
+.ai-prompt-panel__note {
+    margin: 10px 0 0;
+    font-size: 12px;
+}
+
+
+.ai-prompt-panel__error {
+    margin: 0 0 12px;
+    color: #ffb4b4;
+    font-size: 13px;
+    overflow-wrap: anywhere;
+}

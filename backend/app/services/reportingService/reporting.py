@@ -7,7 +7,7 @@ from urllib.parse import quote
 from app.services.geoInspectService.geo import extract_text_evidence
 from app.services.geoInspectService.geo_scene import build_geo_scenes
 from app.services.geoInspectService.geo_visual import verify_scene_visuals
-from app.jobs import job_folder
+from app.APIGateway.jobs import job_folder
 from app.services.mapService.map_query import generate_map_queries
 
 
@@ -262,10 +262,6 @@ def _structure(stages):
     return sections or None
 
 
-def _questions(stages):
-    stage = _stage(stages, "comprehension")
-    return _rows(_dict(stage.get("result")).get("questions"))
-
 
 def _landmarks(stages):
     stage = _stage(stages, "landmarks")
@@ -403,10 +399,9 @@ def render_evidence_json(job):
     landmarks = _landmarks(stages)
     summary = _summary(stages)
     structure = _structure(stages)
-    questions = _questions(stages)
     turns = _speaker_turns(stages)
 
-    from app.transcript import transcript_payload
+    from app.services.audioService.transcript import transcript_payload
 
     transcript = transcript_payload(job)
 
@@ -481,14 +476,6 @@ def render_evidence_json(job):
                 for section in structure or []
             ],
         },
-        "questions": [
-            {
-                "question": item.get("question"),
-                "answer": item.get("answer"),
-                "start": _number(item.get("time_seconds")),
-            }
-            for item in questions
-        ],
         "transcript": {
             "language": transcript.get("language"),
             "speaker_method": transcript.get("speaker_method"),

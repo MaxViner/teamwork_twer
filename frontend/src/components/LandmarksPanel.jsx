@@ -1,5 +1,8 @@
+import { useEffect, useState } from "react";
+import { describeObject, fetchAiStatus } from "../api/jobs.js";
 import { fileUrl } from "../utils/fileUrl.js";
 import { formatTime } from "../utils/formatTime.js";
+import AiDescription from "./landmarksPanel/AiDescription.jsx";
 
 
 const CATEGORY_ORDER = [
@@ -185,6 +188,64 @@ function uniqueObjects(stage) {
 
 export default function LandmarksPanel({ job, onSeek }) {
     const stage = job?.stages?.scene_objects;
+    const [aiStatus, setAiStatus] = useState(null);
+    const [aiState, setAiState] = useState({});
+
+    useEffect(() => {
+        let active = true;
+
+        fetchAiStatus()
+            .then((status) => {
+                if (active) {
+                    setAiStatus(status);
+                }
+            })
+            .catch(() => {
+                if (active) {
+                    setAiStatus({ configured: false, message: "" });
+                }
+            });
+
+        return () => {
+            active = false;
+        };
+    }, []);
+
+    useEffect(() => {
+        setAiState({});
+    }, [job?.id]);
+
+    const requestDescription = async (label, refresh) => {
+        setAiState((current) => ({
+            ...current,
+            [label]: { loading: true, error: "" },
+        }));
+
+        try {
+            const payload = await describeObject(
+                job.id,
+                label,
+                { refresh },
+            );
+
+            setAiState((current) => ({
+                ...current,
+                [label]: {
+                    loading: false,
+                    error: "",
+                    description: payload.description,
+                },
+            }));
+        } catch (error) {
+            setAiState((current) => ({
+                ...current,
+                [label]: {
+                    loading: false,
+                    error: error.message,
+                },
+            }));
+        }
+    };
 
     if (!stage) {
         return null;
@@ -281,6 +342,21 @@ export default function LandmarksPanel({ job, onSeek }) {
                                                     </span>
                                                 )}
                                             </div>
+
+                                            <AiDescription
+                                                description={
+                                                    aiState[item.label]?.description
+                                                    ?? item.ai_description
+                                                }
+                                                loading={aiState[item.label]?.loading}
+                                                error={aiState[item.label]?.error}
+                                                configured={aiStatus?.configured}
+                                                hint={aiStatus?.message}
+                                                onRequest={(refresh) => requestDescription(
+                                                    item.label,
+                                                    refresh,
+                                                )}
+                                            />
                                         </div>
                                     </article>
                                 );

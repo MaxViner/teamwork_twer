@@ -4,11 +4,13 @@ import { useRoadEpisodesData } from "./hooks/useRoadEpisodesData.js";
 import { usePagination } from "./hooks/usePagination.js";
 import { useServerKeyframes } from "./hooks/useServerKeyframes.js";
 import RoadEpisodes from "./parts/RoadEpisodes.jsx";
-import FramePage from "./parts/FramePage.jsx";
+import FrameGrid from "./parts/FrameGrid.jsx";
+import FrameModal from "./parts/FrameModal.jsx";
 import Pager from "./parts/Pager.jsx";
 import ViewToggle from "./parts/ViewToggle.jsx";
 import { formatTime } from "../../utils/formatTime.js";
 import { FRAMES_PER_PAGE } from "./lib/constants.js";
+import './keyFrames.css'
 
 export default function KeyFramesBrowser({ job, onSeek }) {
   const {
@@ -24,6 +26,7 @@ export default function KeyFramesBrowser({ job, onSeek }) {
   const [view, setView] = useState(null);
   const [group, setGroup] = useState(null);
   const [serverPage, setServerPage] = useState(1);
+  const [selected, setSelected] = useState(null);
 
   const live = job?.status === "completed";
 
@@ -42,6 +45,7 @@ export default function KeyFramesBrowser({ job, onSeek }) {
   useEffect(() => {
     setGroup(null);
     setServerPage(1);
+    setSelected(null);
   }, [job?.id]);
 
   const serverData = server.data;
@@ -89,6 +93,7 @@ export default function KeyFramesBrowser({ job, onSeek }) {
     } else {
       localPagination.setPage(next);
     }
+    setSelected(null);
   };
 
   const groups = usingServer
@@ -130,6 +135,7 @@ export default function KeyFramesBrowser({ job, onSeek }) {
                 onClick={() => {
                   setGroup(null);
                   setServerPage(1);
+                  setSelected(null);
                 }}
               >
                 Все локации
@@ -142,6 +148,7 @@ export default function KeyFramesBrowser({ job, onSeek }) {
                   onClick={() => {
                     setGroup(item.number);
                     setServerPage(1);
+                    setSelected(null);
                   }}
                   title={`${formatTime(item.start)} — ${formatTime(item.end)}`}
                 >
@@ -164,16 +171,28 @@ export default function KeyFramesBrowser({ job, onSeek }) {
             canGoForward={page + 1 < pageCount}
           />
 
-          <FramePage
-            job={job}
-            onSeek={onSeek}
-            roads={roads}
-            ocr={ocr}
-            speech={speech}
-            scenes={scenes}
-            frames={visibleFrames}
-            offset={first}
-          />
+          <FrameGrid
+          job={job}
+          frames={visibleFrames}
+          offset={first}
+          ocr={ocr}
+          speech={speech}
+          onOpen={(frame, index) => setSelected({ frame, index })}
+        />
+
+          {selected && (
+            <FrameModal
+              job={job}
+              frame={selected.frame}
+              index={selected.index}
+              roads={roads}
+              ocr={ocr}
+              speech={speech}
+              scenes={scenes}
+              onSeek={onSeek}
+              onClose={() => setSelected(null)}
+            />
+          )}
         </>
       )}
     </section>

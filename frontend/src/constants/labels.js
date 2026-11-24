@@ -18,6 +18,7 @@ export const STAGE_ORDER = [
     "visual_profile",
     "road_geometry",
     "location_evidence",
+    "ai_prompt",
 ];
 
 
@@ -34,6 +35,7 @@ export const STAGE_LABELS = {
     visual_profile: "Визуальный профиль места",
     road_geometry: "Геометрия дороги",
     location_evidence: "Географические улики",
+    ai_prompt: "AI-промпт для поиска места",
 };
 
 
@@ -50,6 +52,7 @@ export const STAGE_COUNT_LABELS = {
     visual_profile: "Проанализированных кадров",
     road_geometry: "Участков с геометрией дороги",
     location_evidence: "Географических улик",
+    ai_prompt: "Поисковых промптов",
 };
 
 
@@ -89,4 +92,5 @@ export const SOURCE_LABELS = {
     scene_objects: "Объекты и признаки места",
     road_geometry: "Геометрия дороги",
     location_evidence: "Географические улики",
+    ai_prompt: "AI-промпт",
 };

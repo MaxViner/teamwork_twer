@@ -6,12 +6,12 @@
 
 import uvicorn
 
-from .server.server import appServer
+from .APIGateway.server import appServer
 
 
 def main() -> None:
     uvicorn.run(
-        "app.server.server:appServer",
+        "app.APIGateway.server:appServer",
         host="127.0.0.1",
         port=8000,
         reload=False,

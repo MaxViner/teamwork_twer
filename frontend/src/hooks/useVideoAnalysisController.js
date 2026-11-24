@@ -17,7 +17,7 @@ function filterObservations(observations, { sourceFilter, reviewFilter, search }
     const needle = search.toLowerCase();
 
     return observations.filter((item) => {
-        if (COMBINED_SOURCES.includes(item.source)) {
+        if (COMBINED_SOURCES.includes(item.source) || item.source === "ai_prompt") {
             return false;
         }
 

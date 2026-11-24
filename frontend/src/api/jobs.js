@@ -31,6 +31,30 @@ export const fetchMapQuery = (id, options = {}) =>
 
 
 
+export const fetchAiStatus = (options = {}) =>
+    request("/ai/status", options);
+
+
+
+export function describeObject(
+    id,
+    label,
+    { refresh = false } = {},
+) {
+    const suffix = refresh ? "?refresh=true" : "";
+
+    return request(
+        `/jobs/${id}/objects/`
+        + `${encodeURIComponent(label)}/ai-description`
+        + suffix,
+        {
+            method: "POST",
+        },
+    );
+}
+
+
+
 export const searchJob = (id, query) =>
     request(
         `/jobs/${id}/search?q=${encodeURIComponent(query)}`,

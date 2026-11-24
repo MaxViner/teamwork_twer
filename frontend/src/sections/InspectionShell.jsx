@@ -11,6 +11,7 @@ export default function InspectionShell({
     video,
     onSave,
     onError,
+    onRetry,
 }) {
     return (
         <div className="inspection-shell">
@@ -42,7 +43,12 @@ export default function InspectionShell({
                         onError={onError}
                     />
                 </section>
-                <AnalysisSections job={job} onSeek={video.seek} onError={onError} />
+                <AnalysisSections
+                    job={job}
+                    onSeek={video.seek}
+                    onError={onError}
+                    onRetry={onRetry}
+                />
             </div>
         </div>
     );

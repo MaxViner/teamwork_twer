@@ -1,10 +1,20 @@
-"""Обнаружение лиц и анонимная группировка людей.
+"""Лица: утилиты детекции/кластеризации и стадия анализа.
 
-Используется детектор YuNet из OpenCV (локальный ONNX-файл) и
-простое описание внешности (HOG-признаки лица). Одинаковые лица
-внутри одного видео получают метки «Человек 1», «Человек 2» и т. д.
-Это не распознавание личности: сервис не знает, кто это, и не
-сравнивает людей с внешними базами.
+Один файл совмещает две роли:
+
+1. Утилиты (model_available, detect_faces, cluster_faces и их
+   внутренние помощники) — используются стадией faces, а при
+   необходимости могут импортироваться другими модулями.
+
+2. Стадию extract_faces — находит лица на уже извлечённых ключевых
+   кадрах и объединяет одинаковые лица внутри одного видео в метки
+   «Человек 1», «Человек 2». Личность не устанавливается: метки
+   нужны только чтобы отличать людей друг от друга и находить их
+   появление.
+
+Файлы стадия не создаёт: кадры уже лежат в runs/<run_id>/,
+полный путь получается через storage.resolve(artifact) по
+folder-relative ссылке из stages.
 """
 
 from functools import lru_cache
@@ -13,6 +23,14 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from app.storage import StorageService
+from app.utils.errors import SkipStage
+from app.utils.observations import observation
+
+from app.services.visyalInspectorService.keyframes import collect_frames
+
+
+# ─────────────────────────── модель YuNet ────────────────────────────
 
 MODEL_PATH = (
     Path(__file__).resolve().parent
@@ -25,6 +43,9 @@ SCORE_THRESHOLD = 0.75
 NMS_THRESHOLD = 0.3
 TOP_K = 5000
 
+
+# ─────────────────────── кластеризация по внешности ──────────────────
+
 # Порог косинусного расстояния между описаниями лиц. Подобран
 # консервативно: лучше показать двух разных «людей», чем склеить
 # разных людей в одного.
@@ -34,6 +55,13 @@ HOG_CELLS = 4
 HOG_BINS = 8
 HOG_SIZE = 32
 
+
+# ─────────────────────────── стадия ──────────────────────────────────
+
+MAX_FACE_FRAMES = 600
+
+
+# ─────────────────────────── утилиты ─────────────────────────────────
 
 def model_available() -> bool:
     return MODEL_PATH.is_file() and MODEL_PATH.stat().st_size > 1000
@@ -310,3 +338,121 @@ def _people(frames: list[dict]) -> list[dict]:
     )
 
     return people
+
+
+# ─────────────────────────── стадия ──────────────────────────────────
+
+def extract_faces(
+    storage: StorageService,
+    stages: dict,
+    progress,
+) -> dict:
+    if not model_available():
+        raise SkipStage(
+            "Детектор лиц недоступен: нет локальной модели YuNet."
+        )
+
+    frames = collect_frames(stages)
+
+    if not frames:
+        raise SkipStage(
+            "Нет кадров для поиска лиц: визуальные этапы "
+            "не завершены."
+        )
+
+    frames = frames[:MAX_FACE_FRAMES]
+    analyzed = []
+    face_total = 0
+
+    for index, frame in enumerate(frames):
+        progress(
+            index / max(len(frames), 1) * 99,
+            f"Поиск лиц: кадр {index + 1} из {len(frames)}",
+        )
+
+        artifact = frame.get("artifact")
+
+        if not artifact:
+            continue
+
+        path = storage.resolve(artifact)
+
+        if not path.is_file():
+            continue
+
+        faces = detect_faces(path)
+
+        if not faces:
+            continue
+
+        face_total += len(faces)
+
+        analyzed.append({
+            "timestamp": round(float(frame["timestamp"]), 3),
+            "artifact": artifact,
+            "faces": faces,
+        })
+
+    people = cluster_faces(analyzed)
+
+    progress(100, "Поиск лиц завершён")
+
+    text = _summary_text(people, face_total, len(frames))
+
+    observations = []
+
+    if analyzed:
+        observations.append(
+            observation(
+                source="faces",
+                start=analyzed[0]["timestamp"],
+                end=analyzed[-1]["timestamp"],
+                text=text,
+                extractor="opencv-yunet-faces",
+                data={
+                    "kind": "faces_summary",
+                    "people": people,
+                    "frame_count": len(analyzed),
+                    "face_count": face_total,
+                    "anonymous": True,
+                },
+            )
+        )
+
+    return {
+        "people": people,
+        "frames": analyzed,
+        "person_count": len(people),
+        "face_count": face_total,
+        "sampled_frames": len(frames),
+        "frames_with_faces": len(analyzed),
+        "observations": observations,
+        "method": "YuNet + HOG-описание внешности",
+        "note": (
+            "Метки «Человек N» анонимны: это разные лица внутри "
+            "видео, а не установленная личность. Совпадение лиц "
+            "между кадрами приблизительное."
+        ),
+    }
+
+
+def _summary_text(people, face_count, sampled):
+    if not people:
+        return (
+            "Лица не обнаружены "
+            f"(проверено кадров: {sampled}). "
+            "Это не значит, что людей в видео нет."
+        )
+
+    parts = [
+        f"Обнаружено лиц: {face_count}; "
+        f"разных людей по внешности: {len(people)}."
+    ]
+
+    for item in people[:6]:
+        parts.append(
+            f"{item['label']}: {item['frame_count']} кадр., "
+            f"с {item['first_start']:.1f} с."
+        )
+
+    return " ".join(parts)

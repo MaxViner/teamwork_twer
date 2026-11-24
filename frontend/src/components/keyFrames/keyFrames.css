@@ -1,0 +1,263 @@
+/* ═══════════════════════════════════════════════════════════════════
+   РАЗДЕЛ «КЛЮЧЕВЫЕ КАДРЫ»
+   Панель → чипы групп → пагинация → сетка превью → модалка деталей
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* ─────────────── 1. Панель ─────────────── */
+
+.keyframes-panel {
+    margin-top: 14px;
+}
+
+.keyframes-panel .section-row h2 {
+    margin: 0;
+}
+
+/* ─────────────── 2. Чипы групп (по сценам/локациям) ─────────────── */
+
+/* Базовые .insight-chip / .insight-chip-button уже есть в проекте.
+   Здесь только специфика для группы keyframes — вертикальное выравнивание
+   счётчика внутри чипа и аккуратные отступы. */
+.kf-groups {
+    margin: 12px 0;
+}
+
+.kf-groups .insight-chip-button {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.kf-groups .insight-chip-button small {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 20px;
+    height: 18px;
+    padding: 0 6px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+}
+
+.kf-groups .insight-chip-button.is-active small {
+    background: rgba(255, 138, 61, 0.2);
+    color: var(--accent-strong);
+}
+
+/* ─────────────── 3. Сетка компактных превью ─────────────── */
+
+.frame-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    gap: 10px;
+    margin-top: 14px;
+}
+
+.frame-grid__card {
+    position: relative;
+    display: block;
+    padding: 0;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    overflow: hidden;
+    background: #000;
+    aspect-ratio: 16 / 9;
+    cursor: pointer;
+    color: inherit;
+    font: inherit;
+    transition:
+        border-color 150ms ease,
+        transform 150ms ease,
+        box-shadow 150ms ease;
+}
+
+.frame-grid__card:hover {
+    border-color: var(--line-strong);
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-md);
+}
+
+.frame-grid__card:focus-visible {
+    outline: 2px solid var(--accent-border);
+    outline-offset: 2px;
+}
+
+.frame-grid__img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+/* ─────────────── 4. Бейджи (топ-объект, освещение, текст, речь) ─────────────── */
+
+/* flex + gap гарантирует, что бейджи не слипнутся в «объекты 8место» */
+.frame-grid__badges {
+    position: absolute;
+    top: 6px;
+    left: 6px;
+    right: 6px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    align-content: flex-start;
+    pointer-events: none;
+}
+
+.frame-grid__badge {
+    display: inline-flex;
+    align-items: center;
+    max-width: 100%;
+    padding: 2px 7px;
+    border-radius: 999px;
+    background: rgba(0, 0, 0, 0.72);
+    color: #ffffff;
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1.4;
+    letter-spacing: 0.01em;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    backdrop-filter: blur(2px);
+}
+
+/* ─────────────── 5. Таймкод в левом нижнем углу ─────────────── */
+
+.frame-grid__time {
+    position: absolute;
+    left: 6px;
+    bottom: 6px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    background: rgba(0, 0, 0, 0.72);
+    color: #ffffff;
+    font-size: 11px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.02em;
+    pointer-events: none;
+}
+
+/* ─────────────── 6. Модалка с деталями кадра ─────────────── */
+
+.frame-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 60;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+}
+
+.frame-modal__backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.72);
+    animation: frame-modal-fade 150ms ease;
+}
+
+.frame-modal__body {
+    position: relative;
+    z-index: 1;
+    max-width: 860px;
+    width: 100%;
+    max-height: calc(100vh - 48px);
+    overflow: auto;
+    background: var(--paper);
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    padding: 18px;
+    box-shadow: var(--shadow-lg);
+    animation: frame-modal-in 180ms ease;
+}
+
+.frame-modal__close {
+    position: absolute;
+    top: 10px;
+    right: 12px;
+    z-index: 2;
+    width: 28px;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    border: 1px solid var(--line);
+    background: rgba(0, 0, 0, 0.55);
+    color: #ffffff;
+    font-size: 18px;
+    line-height: 1;
+    cursor: pointer;
+    transition:
+        background-color 150ms ease,
+        border-color 150ms ease;
+}
+
+.frame-modal__close:hover {
+    background: rgba(0, 0, 0, 0.78);
+    border-color: var(--line-strong);
+}
+
+.frame-modal__close:focus-visible {
+    outline: 2px solid var(--accent-border);
+    outline-offset: 2px;
+}
+
+@keyframes frame-modal-fade {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+}
+
+@keyframes frame-modal-in {
+    from {
+        opacity: 0;
+        transform: translateY(8px) scale(0.98);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
+}
+
+/* Внутри модалки карточка кадра (FrameCard) остаётся как была.
+   Убираем только лишний верхний отступ, чтобы карточка прилегала
+   к кнопке закрытия. */
+.frame-modal__body .keyframe-card {
+    margin-top: 0;
+}
+
+/* ─────────────── 7. Адаптив ─────────────── */
+
+@media (max-width: 640px) {
+    .frame-grid {
+        grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+        gap: 8px;
+    }
+
+    .frame-modal {
+        padding: 12px;
+    }
+
+    .frame-modal__body {
+        max-height: calc(100vh - 24px);
+        padding: 14px;
+        border-radius: 12px;
+    }
+
+    .frame-grid__badge {
+        font-size: 10px;
+        padding: 2px 6px;
+    }
+}
+
+@media (max-width: 420px) {
+    .frame-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
