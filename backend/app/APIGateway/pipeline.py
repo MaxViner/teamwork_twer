@@ -18,6 +18,8 @@ from app.services.audioService.audio_structure import extract_audio_structure
 from app.services.audioService.speech import extract_speech
 from app.services.geoInspectService.location import extract_location_evidence
 from app.services.mediaService.metadata import extract_metadata
+from app.services.objectDetectionService.detector import YoloDetector
+from app.services.objectDetectionService.stage import extract_objects
 from app.services.preprocessingService.prepare import prepare
 from app.services.summarizationService.context import extract_structure
 from app.services.summarizationService.summary import extract_summary
@@ -78,6 +80,7 @@ def run_stage(
             prepared["duration"],
             progress,
         ),
+       
 
         "speech": lambda: extract_speech(
             storage,
@@ -104,6 +107,11 @@ def run_stage(
             options,
             progress,
         ),
+        "object_detection": lambda: 
+        extract_objects(storage, 
+                        stages, 
+                        progress)
+        ,
 
         "faces": lambda: extract_faces(
             storage,

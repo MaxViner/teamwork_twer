@@ -66,7 +66,7 @@ STAGE_WEIGHTS = {
     "location_evidence": 8.0,
     "summary": 5.0,
     "video_structure": 3.0,
-    
+    "object_detection": 5.0,
     "landmarks": 8.0,
     "ai_prompt": 4.0,
 }

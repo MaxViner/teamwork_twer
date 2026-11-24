@@ -5,7 +5,7 @@ Observation и возвращает обычный словарь для сох�
 Так все этапы создают записи одинаковой структуры.
 """
 
-from app.models import Observation
+from app.models.models import Observation
 
 
 def observation(**kwargs) -> dict:

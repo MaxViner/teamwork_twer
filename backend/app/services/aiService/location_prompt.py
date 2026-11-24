@@ -12,7 +12,7 @@ OCR, ориентиры, дорогу, конспект, структуру, р�
 import json
 
 from app.services.aiService import client
-from app.services.aiService.config import get_settings
+from app.services.aiService.aiConfig import get_settings
 from app.services.reportingService.reporting import render_evidence_json
 from app.utils.errors import SkipStage
 from app.utils.observations import observation

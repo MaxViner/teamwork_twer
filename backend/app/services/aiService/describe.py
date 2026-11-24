@@ -19,7 +19,7 @@ from io import BytesIO
 from PIL import Image
 
 from app.services.aiService import client
-from app.services.aiService.config import get_settings
+from app.services.aiService.aiConfig import get_settings
 from app.storage import StorageService
 
 

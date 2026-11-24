@@ -1,5 +1,6 @@
-import VideoAnalysisApp from "./sections/VideoAnalysisApp.jsx";
+import AppRoutes from "./pages/AppRouter.jsx";
+
 
 export default function App() {
-    return <VideoAnalysisApp />;
+    return <AppRoutes />;
 }
