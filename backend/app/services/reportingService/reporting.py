@@ -198,12 +198,30 @@ def _text_clues(stages):
     return [item for _, item in ordered]
 
 
+def _place_result(stages):
+    """Результат консолидированной стадии place_profile."""
+    return _dict(_stage(stages, "place_profile").get("result"))
+
+
+def _visual_result(stages):
+    """Результат visual_analysis с откатом на старые стадии."""
+    result = _dict(_stage(stages, "visual_analysis").get("result"))
+    if result:
+        return result
+    result = _dict(_stage(stages, "scene_objects").get("result"))
+    if result:
+        return result
+    return _dict(_stage(stages, "visual_profile").get("result"))
+
+
 def _roads(stages):
-    stage = _stage(stages, "road_geometry")
-    observations = _rows(stage.get("observations"))
+    place = _stage(stages, "place_profile")
+    legacy = _stage(stages, "road_geometry")
+    observations = _rows(place.get("observations")) or _rows(legacy.get("observations"))
     if any(item.get("review") == "rejected" for item in observations):
         return []
-    episodes = _rows(_dict(stage.get("result")).get("episodes"))
+    road = _dict(_place_result(stages).get("road"))
+    episodes = _rows(road.get("episodes")) or _rows(_dict(legacy.get("result")).get("episodes"))
     if episodes:
         return sorted(episodes, key=lambda ep: (
             not bool(ep.get("context_clues")),
@@ -218,10 +236,12 @@ def _roads(stages):
 
 
 def _visual(stages):
-    stage = _stage(stages, "scene_objects")
-    if any(item.get("review") == "rejected" for item in _rows(stage.get("observations"))):
+    stage = _stage(stages, "visual_analysis")
+    legacy = _stage(stages, "scene_objects")
+    if any(item.get("review") == "rejected"
+           for item in _rows(stage.get("observations")) + _rows(legacy.get("observations"))):
         return []
-    result = _dict(stage.get("result"))
+    result = _visual_result(stages)
     if result.get("method") != "segformer":
         return []
     best = {}
@@ -235,14 +255,22 @@ def _visual(stages):
 
 
 def _faces(stages):
-    stage = _stage(stages, "faces")
-    result = _dict(stage.get("result"))
+    result = _visual_result(stages)
     people = _rows(result.get("people"))
     if not people:
-        return None
+        legacy = _dict(_stage(stages, "faces").get("result"))
+        people = _rows(legacy.get("people"))
+        if not people:
+            return None
+        return {
+            "people": people,
+            "frame_count": legacy.get("frame_count"),
+            "face_count": legacy.get("face_count"),
+            "note": _clean(legacy.get("note")),
+        }
     return {
         "people": people,
-        "frame_count": result.get("frame_count"),
+        "frame_count": result.get("frames_with_faces") or result.get("successful_frames"),
         "face_count": result.get("face_count"),
         "note": _clean(result.get("note")),
     }
@@ -264,18 +292,27 @@ def _structure(stages):
 
 
 def _landmarks(stages):
-    stage = _stage(stages, "landmarks")
-    result = _dict(stage.get("result"))
-    if not result:
+    result = _place_result(stages)
+    if result:
+        return {
+            "landmarks": _rows(result.get("landmarks")),
+            "geometry": _dict(result.get("geometry")),
+            "frame_count": result.get("geometry_frame_count"),
+        }
+    legacy = _dict(_stage(stages, "landmarks").get("result"))
+    if not legacy:
         return None
     return {
-        "landmarks": _rows(result.get("landmarks")),
-        "geometry": _dict(result.get("geometry")),
-        "frame_count": result.get("frame_count_total") or result.get("frame_count"),
+        "landmarks": _rows(legacy.get("landmarks")),
+        "geometry": _dict(legacy.get("geometry")),
+        "frame_count": legacy.get("frame_count_total") or legacy.get("frame_count"),
     }
 
 
 def _schematic(stages):
+    schematic = _dict(_dict(_place_result(stages).get("road")).get("schematic"))
+    if schematic:
+        return schematic
     return _dict(_dict(_stage(stages, "road_geometry").get("result")).get("schematic"))
 
 

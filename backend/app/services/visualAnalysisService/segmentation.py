@@ -1,26 +1,24 @@
-"""Объекты и типы сцен.
+"""Семантическая разметка кадров (SegFormer и эвристический fallback).
 
-Модель SegFormer размечает кадр по категориям (дорога, здание, вода,
-деревья и т.д.). Если модель недоступна, используется быстрая
-эвристика по цветам и текстурам. Все кадры складываются в одно
-наблюдение-сводку, а уникальные типы объектов собираются в список
-по категориям: архитектура, транспорт, природа и уличные объекты.
+Основной путь — модель nvidia/segformer-b0-finetuned-ade-512-512 через
+transformers. Она тяжёлая, поэтому импортируется лениво внутри
+функции: если torch/transformers не установлены или модель не
+скачалась, стадия не падает, а переходит на быстрые эвристики по
+цвету и текстуре.
 
-Файловые операции идут через StorageService: stage_frames получает
-folder=storage.folder и run_folder=storage.run_dir, поэтому «path»
-и «artifact» в кадрах остаются такими же, как при старой сигнатуре
-(folder, run_folder).
+Модуль самодостаточен: не импортирует старые
+visyalInspectorService.scene_objects / visual_profile, чтобы те
+можно было удалить без регрессии visual_analysis.
 """
+
+from __future__ import annotations
 
 import json
 from pathlib import Path
 
 import numpy as np
 
-from app.storage import StorageService
-from app.services.mediaService.frames import analysis_frame_count, stage_frames
-from app.utils.observations import observation
-from app.services.visyalInspectorService.visual_profile import (
+from app.services.visualAnalysisService.metrics import (
     analyze_frame,
     describe_metrics,
 )
@@ -192,42 +190,25 @@ HEURISTIC_LABELS = {
 }
 
 
-DEFAULT_SCENE_FRAMES = 500
-MAX_SCENE_FRAMES = 2000
 MAX_ERROR_EXAMPLES = 20
 SMALL_LANDMARK_LABELS = {"signboard", "tower", "pole", "bridge"}
 
 
-def extract_scene_objects(
-    storage: StorageService,
-    video: Path,
-    duration: float,
-    stages: dict,
-    options: dict,
+def extract_segments(
+    frames: list[dict],
     progress,
 ) -> dict:
-    count = analysis_frame_count(options)
+    """Разметить кадры и вернуть объекты по каждому кадру.
 
-    frames = stage_frames(
-        folder=storage.folder,
-        run_folder=storage.run_dir,
-        video=video,
-        duration=duration,
-        stages=stages,
-        count=count,
-        prefix="objects",
-    )
-
-    if not frames:
-        raise RuntimeError(
-            "Не удалось получить кадры для анализа объектов."
-        )
+    Сначала пробует SegFormer, затем эвристики. Возвращает словарь
+    с полями frames (timestamp, artifact, objects), method, model,
+    errors, error_count и note.
+    """
 
     try:
-        result = _extract_with_model(
-            frames,
-            progress,
-        )
+        result = _extract_with_model(frames, progress)
+        result.setdefault("method", "segformer")
+        return result
 
     except Exception as error:
         progress(
@@ -236,301 +217,49 @@ def extract_scene_objects(
             "использую оценочный профиль сцены",
         )
 
-        result = _extract_with_heuristics(
+        return _extract_with_heuristics(
             frames,
             progress,
             error,
         )
 
-    result["requested_frames"] = count
-    return result
 
+def run_segformer(image_path: Path) -> list[dict]:
+    """Разметить одно изображение моделью SegFormer.
 
-def _extract_with_model(
-    frames: list[dict],
-    progress,
-) -> dict:
-    import torch
-    from PIL import Image
-    from transformers import (
-        AutoImageProcessor,
-        SegformerForSemanticSegmentation,
-    )
+    Публичная обёртка для тестового эндпоинта и отладки. При
+    недоступной модели возвращает эвристические объекты.
+    """
 
-    progress(0, "Загружаю модель объектов и признаков места")
-
-    processor = AutoImageProcessor.from_pretrained(
-        SCENE_MODEL,
-    )
-
-    model = SegformerForSemanticSegmentation.from_pretrained(
-        SCENE_MODEL,
-    ).eval()
-
-    device = (
-        "cuda"
-        if torch.cuda.is_available()
-        else "cpu"
-    )
-
-    model = model.to(device)
-
-    saved_frames = []
-    errors = []
-
-    try:
-        for index, frame in enumerate(frames):
-            progress(
-                index / len(frames) * 100,
-                f"Анализ объектов: кадр {index + 1}/{len(frames)}",
-            )
-
-            try:
-                with Image.open(frame["path"]) as source:
-                    image = source.convert("RGB")
-
-                inputs = processor(
-                    images=image,
-                    return_tensors="pt",
-                ).to(device)
-
-                with torch.inference_mode():
-                    outputs = model(**inputs)
-
-                # Логиты SegFormer имеют низкое разрешение.
-                # Считать softmax в полном разрешении кадра
-                # слишком дорого по памяти и времени.
-                probabilities = torch.nn.functional.softmax(
-                    outputs.logits,
-                    dim=1,
-                )[0]
-
-                segmentation = probabilities.argmax(
-                    dim=0,
-                ).cpu().numpy()
-
-                found = _labels_from_segmentation(
-                    segmentation,
-                    probabilities,
-                    model.config.id2label,
-                )
-
-                saved_frames.append({
-                    "timestamp": frame["timestamp"],
-                    "artifact": frame["artifact"],
-                    "objects": found,
-                })
-
-            except Exception as error:
-                errors.append({
-                    "timestamp": frame["timestamp"],
-                    "error": str(error)[:1500],
-                })
-
-        if not saved_frames:
-            raise RuntimeError(
-                "Ни один кадр не проанализирован. "
-                + json.dumps(
-                    errors[:2],
-                    ensure_ascii=False,
-                )
-            )
-
-        progress(100, "Анализ объектов завершён")
-
-        unique_objects = unique_objects_from_frames(
-            saved_frames
-        )
-
-        return {
-            "frames": saved_frames,
-            "observations": _build_observations(
-                saved_frames,
-                unique_objects,
-                method="segformer",
-                model=SCENE_MODEL,
-            ),
-            "errors": errors[:MAX_ERROR_EXAMPLES],
-            "error_count": len(errors),
-            "model": SCENE_MODEL,
-            "method": "segformer",
-            "sampled_frames": len(frames),
-            "successful_frames": len(saved_frames),
-            "frames_with_objects": sum(bool(frame["objects"]) for frame in saved_frames),
-            "unique_objects": unique_objects,
-            "object_count": len(unique_objects),
-            "category_count": len({
-                item["category"]
-                for item in unique_objects
-            }),
-            "note": (
-                "Определены видимые типы объектов и областей. "
-                "Это не координаты и не подтверждённый адрес."
-            ),
+    frames = [
+        {
+            "path": str(image_path),
+            "timestamp": 0.0,
+            "artifact": "",
         }
+    ]
 
-    finally:
-        del model, processor
-
-        import gc
-
-        gc.collect()
-
-        try:
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-
-        except ImportError:
-            pass
-
-
-def _labels_from_segmentation(
-    segmentation,
-    probabilities,
-    id2label: dict,
-) -> list[dict]:
-    found = []
-    height, width = segmentation.shape[:2]
-
-    for label_id in np.unique(segmentation):
-        label = id2label[int(label_id)]
-
-        if label not in INTERESTING_LABELS:
-            continue
-
-        mask = segmentation == label_id
-        area_percent = float(mask.mean() * 100)
-
-        # Мелкие ориентиры могут занимать меньше 1% кадра. Для них
-        # требуем более высокий средний балл, а не выдаём метку за факт.
-        min_area = 0.15 if label in SMALL_LANDMARK_LABELS else 1.0
-        if area_percent < min_area:
-            continue
-
-        ys, xs = np.where(mask)
-
-        if not len(xs):
-            continue
-
-        bbox = [
-            float(xs.min() / width),
-            float(ys.min() / height),
-            float((xs.max() + 1) / width),
-            float((ys.max() + 1) / height),
-        ]
-
-        confidence = float(
-            probabilities[
-                int(label_id),
-                ys,
-                xs,
-            ].mean()
-        )
-
-        if area_percent < 1.0 and (len(xs) < 4 or confidence < 0.60):
-            continue
-
-        found.append({
-            "label": label,
-            "label_ru": LABEL_RU.get(label, label),
-            "area_percent": round(area_percent, 2),
-            "bbox": [round(value, 4) for value in bbox],
-            "confidence": round(confidence, 3),
-        })
-
-    found.sort(key=lambda entry: -entry["area_percent"])
-
-    return found
-
-
-def _extract_with_heuristics(
-    frames: list[dict],
-    progress,
-    model_error: Exception,
-) -> dict:
-    saved_frames = []
-    errors = []
-
-    for index, frame in enumerate(frames):
-        progress(
-            index / len(frames) * 100,
-            "Оценка сцены: кадр "
-            f"{index + 1}/{len(frames)}",
-        )
-
-        try:
-            metrics = analyze_frame(frame["path"])
-            descriptors = describe_metrics(metrics)
-
-        except Exception as error:
-            errors.append({
-                "timestamp": frame["timestamp"],
-                "error": str(error)[:1000],
-            })
-            continue
-
-        objects = _objects_from_descriptors(
-            descriptors,
-            metrics,
-        )
-
-        saved_frames.append({
-            "timestamp": frame["timestamp"],
-            "artifact": frame["artifact"],
-            "objects": objects,
-        })
-
-    if not saved_frames:
-        raise RuntimeError(
-            "Не удалось оценить ни один кадр. "
-            + str(model_error)[:500]
-        )
-
-    progress(100, "Оценка сцены завершена")
-
-    unique_objects = unique_objects_from_frames(
-        saved_frames
+    result = extract_segments(
+        frames,
+        lambda percent, message: None,
     )
 
-    return {
-        "frames": saved_frames,
-        "observations": _build_observations(
-            saved_frames,
-            unique_objects,
-            method="heuristic-fallback",
-            model=None,
-        ),
-        "errors": errors[:MAX_ERROR_EXAMPLES],
-        "error_count": len(errors),
-        "model": None,
-        "method": "heuristic-fallback",
-        "model_error": str(model_error)[:1000],
-        "sampled_frames": len(frames),
-        "successful_frames": len(saved_frames),
-        "frames_with_objects": sum(bool(frame["objects"]) for frame in saved_frames),
-        "unique_objects": unique_objects,
-        "object_count": len(unique_objects),
-        "category_count": len({
-            item["category"]
-            for item in unique_objects
-        }),
-        "note": (
-            "Семантическая модель недоступна или не обработала выборку. "
-            "Типы поверхностей оценены по цвету и текстуре; "
-            "это не координаты и не подтверждённый адрес."
-        ),
-    }
+    saved = result.get("frames") or []
+
+    if not saved:
+        return []
+
+    return list(saved[0].get("objects") or [])
 
 
 def unique_objects_from_frames(
     frames: list[dict],
 ) -> list[dict]:
-    """
-    Собирает уникальные типы объектов по всем кадрам.
+    """Собрать уникальные типы объектов по всем кадрам.
 
     Модель размечает классы, а не отдельные экземпляры, поэтому
     «уникальный объект» здесь — тип объекта. Для каждого типа
-    сохраняются число кадров, лучший кадр и все таймкоды.
+    сохраняются число кадров, лучший кадр и таймкоды.
     """
 
     collected = {}
@@ -619,87 +348,285 @@ def unique_objects_from_frames(
     return result
 
 
-def _build_observations(
+def _extract_with_model(
     frames: list[dict],
-    unique_objects: list[dict],
-    method: str,
-    model: str | None,
+    progress,
+) -> dict:
+    """Разметить кадры SegFormer, если модель доступна."""
+
+    import torch
+    from PIL import Image
+    from transformers import (
+        AutoImageProcessor,
+        SegformerForSemanticSegmentation,
+    )
+
+    progress(0, "Загружаю модель объектов и признаков места")
+
+    processor = AutoImageProcessor.from_pretrained(
+        SCENE_MODEL,
+    )
+
+    model = SegformerForSemanticSegmentation.from_pretrained(
+        SCENE_MODEL,
+    ).eval()
+
+    device = (
+        "cuda"
+        if torch.cuda.is_available()
+        else "cpu"
+    )
+
+    model = model.to(device)
+
+    saved_frames = []
+    errors = []
+
+    try:
+        for index, frame in enumerate(frames):
+            progress(
+                index / len(frames) * 100,
+                f"Анализ объектов: кадр {index + 1}/{len(frames)}",
+            )
+
+            try:
+                with Image.open(frame["path"]) as source:
+                    image = source.convert("RGB")
+
+                inputs = processor(
+                    images=image,
+                    return_tensors="pt",
+                ).to(device)
+
+                with torch.inference_mode():
+                    outputs = model(**inputs)
+
+                probabilities = torch.nn.functional.softmax(
+                    outputs.logits,
+                    dim=1,
+                )[0]
+
+                segmentation = probabilities.argmax(
+                    dim=0,
+                ).cpu().numpy()
+
+                found = _labels_from_segmentation(
+                    segmentation,
+                    probabilities,
+                    model.config.id2label,
+                )
+
+                saved_frames.append({
+                    "timestamp": frame["timestamp"],
+                    "artifact": frame["artifact"],
+                    "objects": found,
+                })
+
+            except Exception as error:
+                errors.append({
+                    "timestamp": frame["timestamp"],
+                    "error": str(error)[:1500],
+                })
+
+        if not saved_frames:
+            raise RuntimeError(
+                "Ни один кадр не проанализирован. "
+                + json.dumps(
+                    errors[:2],
+                    ensure_ascii=False,
+                )
+            )
+
+        progress(100, "Анализ объектов завершён")
+
+        unique_objects = unique_objects_from_frames(
+            saved_frames
+        )
+
+        return {
+            "frames": saved_frames,
+            "errors": errors[:MAX_ERROR_EXAMPLES],
+            "error_count": len(errors),
+            "model": SCENE_MODEL,
+            "method": "segformer",
+            "sampled_frames": len(frames),
+            "successful_frames": len(saved_frames),
+            "frames_with_objects": sum(
+                bool(frame["objects"])
+                for frame in saved_frames
+            ),
+            "unique_objects": unique_objects,
+            "object_count": len(unique_objects),
+            "category_count": len({
+                item["category"]
+                for item in unique_objects
+            }),
+            "note": (
+                "Определены видимые типы объектов и областей. "
+                "Это не координаты и не подтверждённый адрес."
+            ),
+        }
+
+    finally:
+        del model, processor
+
+        import gc
+
+        gc.collect()
+
+        try:
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
+        except ImportError:
+            pass
+
+
+def _labels_from_segmentation(
+    segmentation,
+    probabilities,
+    id2label: dict,
 ) -> list[dict]:
-    """Складывает все кадры объектов в одно наблюдение-сводку."""
+    """Превратить карту классов SegFormer в список объектов."""
 
-    segments = []
+    found = []
+    height, width = segmentation.shape[:2]
 
-    for frame in frames:
-        objects = frame.get("objects") or []
+    for label_id in np.unique(segmentation):
+        label = id2label[int(label_id)]
 
-        if not objects:
+        if label not in INTERESTING_LABELS:
             continue
 
-        readable = ", ".join(
-            f"{entry['label_ru']} "
-            f"({entry['area_percent']}%)"
-            for entry in objects[:6]
+        mask = segmentation == label_id
+        area_percent = float(mask.mean() * 100)
+
+        # Мелкие ориентиры могут занимать меньше 1% кадра. Для них
+        # требуем более высокий средний балл, а не выдаём метку за факт.
+        min_area = 0.15 if label in SMALL_LANDMARK_LABELS else 1.0
+        if area_percent < min_area:
+            continue
+
+        ys, xs = np.where(mask)
+
+        if not len(xs):
+            continue
+
+        bbox = [
+            float(xs.min() / width),
+            float(ys.min() / height),
+            float((xs.max() + 1) / width),
+            float((ys.max() + 1) / height),
+        ]
+
+        confidence = float(
+            probabilities[
+                int(label_id),
+                ys,
+                xs,
+            ].mean()
         )
 
-        segments.append({
-            "start": round(float(frame["timestamp"]), 3),
-            "end": round(float(frame["timestamp"]), 3),
-            "text": "В кадре: " + readable,
-            "artifact": frame.get("artifact"),
+        if area_percent < 1.0 and (len(xs) < 4 or confidence < 0.60):
+            continue
+
+        found.append({
+            "label": label,
+            "label_ru": LABEL_RU.get(label, label),
+            "area_percent": round(area_percent, 2),
+            "bbox": [round(value, 4) for value in bbox],
+            "confidence": round(confidence, 3),
         })
 
-    if not segments:
-        return []
+    found.sort(key=lambda entry: -entry["area_percent"])
 
-    categories = {
-        item["category"]
-        for item in unique_objects
-    }
+    return found
 
-    top = ", ".join(
-        f"{item['label_ru']} "
-        f"({item['frame_count']} кадр.)"
-        for item in unique_objects[:8]
-    )
 
-    text = (
-        f"В видео найдено {len(unique_objects)} типов "
-        f"объектов в {len(categories)} категориях."
-    )
+def _extract_with_heuristics(
+    frames: list[dict],
+    progress,
+    model_error: Exception,
+) -> dict:
+    """Оценить типы поверхностей по метрикам, если модели нет."""
 
-    if top:
-        text += " " + top + "."
+    saved_frames = []
+    errors = []
 
-    return [
-        observation(
-            source="scene_objects",
-            start=segments[0]["start"],
-            end=segments[-1]["end"],
-            text=text,
-            extractor=(
-                model
-                or "pillow-numpy-scene-heuristics"
-            ),
-            data={
-                "kind": "scene_objects_summary",
-                "method": method,
-                "scene_model": model,
-                "segment_count": len(segments),
-                "segments": segments,
-                "object_count": len(unique_objects),
-                "category_count": len(categories),
-                "machine_generated": True,
-                "requires_review": True,
-                "time_is_approximate": True,
-            },
+    for index, frame in enumerate(frames):
+        progress(
+            index / len(frames) * 100,
+            "Оценка сцены: кадр "
+            f"{index + 1}/{len(frames)}",
         )
-    ]
+
+        try:
+            metrics = analyze_frame(frame["path"])
+            descriptors = describe_metrics(metrics)
+
+        except Exception as error:
+            errors.append({
+                "timestamp": frame["timestamp"],
+                "error": str(error)[:1000],
+            })
+            continue
+
+        objects = _objects_from_descriptors(
+            descriptors,
+            metrics,
+        )
+
+        saved_frames.append({
+            "timestamp": frame["timestamp"],
+            "artifact": frame["artifact"],
+            "objects": objects,
+        })
+
+    if not saved_frames:
+        raise RuntimeError(
+            "Не удалось оценить ни один кадр. "
+            + str(model_error)[:500]
+        )
+
+    progress(100, "Оценка сцены завершена")
+
+    unique_objects = unique_objects_from_frames(
+        saved_frames
+    )
+
+    return {
+        "frames": saved_frames,
+        "errors": errors[:MAX_ERROR_EXAMPLES],
+        "error_count": len(errors),
+        "model": None,
+        "method": "heuristic-fallback",
+        "model_error": str(model_error)[:1000],
+        "sampled_frames": len(frames),
+        "successful_frames": len(saved_frames),
+        "frames_with_objects": sum(
+            bool(frame["objects"])
+            for frame in saved_frames
+        ),
+        "unique_objects": unique_objects,
+        "object_count": len(unique_objects),
+        "category_count": len({
+            item["category"]
+            for item in unique_objects
+        }),
+        "note": (
+            "Семантическая модель недоступна или не обработала выборку. "
+            "Типы поверхностей оценены по цвету и текстуре; "
+            "это не координаты и не подтверждённый адрес."
+        ),
+    }
 
 
 def _objects_from_descriptors(
     descriptors: dict,
     metrics: dict,
 ) -> list[dict]:
+    """Собрать объекты-поверхности из словесного описания кадра."""
+
     landscape = descriptors.get("landscape", [])
     objects = []
 

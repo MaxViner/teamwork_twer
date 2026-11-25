@@ -48,7 +48,17 @@ def _result(stages, key):
 def _visual_frames(stages):
     """Deduplicate frames; exclude source observations rejected by user."""
     by_time = {}
-    for stage_name in ("ocr", "scene_objects", "landmarks"):
+    visual_stage = (
+        "visual_analysis"
+        if _result(stages, "visual_analysis")
+        else "scene_objects"
+    )
+    landmark_stage = (
+        "place_profile"
+        if _result(stages, "place_profile")
+        else "landmarks"
+    )
+    for stage_name in ("ocr", visual_stage, landmark_stage):
         stage = stages.get(stage_name) or {}
         if not isinstance(stage, dict) or stage.get("status") not in ("completed", "partial"):
             continue
@@ -57,7 +67,9 @@ def _visual_frames(stages):
             for item in _records(stage.get("observations"))
         ):
             continue
-        for frame in _records(_result(stages, stage_name).get("frames")):
+        result = _result(stages, stage_name)
+        frames = result.get("geometry_frames") if stage_name == "place_profile" else result.get("frames")
+        for frame in _records(frames):
             t = _num(frame.get("timestamp"))
             if t is None:
                 continue
@@ -73,7 +85,7 @@ def _visual_frames(stages):
                                  "road", "bridge", "tower", "column", "wall", "tree"}:
                     continue
                 confidence = _num(obj.get("confidence"))
-                if stage_name == "scene_objects" and _result(stages, stage_name).get("method") != "segformer":
+                if stage_name in ("scene_objects", "visual_analysis") and result.get("method") != "segformer":
                     continue
                 entry["visual_candidates"].append({
                     "label": label, "model_score": confidence,

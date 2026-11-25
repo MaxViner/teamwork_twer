@@ -163,7 +163,9 @@ def _ocr_text(stages: dict) -> str:
 
 
 def _objects(stages: dict) -> list[dict]:
-    result = stages.get("scene_objects", {}).get("result") or {}
+    result = stages.get("visual_analysis", {}).get("result") or {}
+    if not result:
+        result = stages.get("scene_objects", {}).get("result") or {}
 
     objects = result.get("unique_objects") or []
 

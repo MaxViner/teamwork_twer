@@ -1,27 +1,26 @@
-"""Ориентиры и геометрия кадра.
+"""Ориентиры и геометрия кадра для стадии place_profile.
 
-Для ключевых кадров оценивает линию горизонта, точку схода,
-вертикальные доминанты, симметрию и силуэт застройки. Отдельно
-собирает узнаваемые ориентиры (церковь, памятник, башня, дом,
-мост) и надписи. Эти признаки помогают сопоставить кадр с картой
-или со справочным снимком.
+Модуль перенесён из visyalInspectorService.landmarks и не зависит от
+старых стадий. Оценивает линию горизонта, точку схода, вертикальные
+доминанты, симметрию и силуэт застройки. Отдельно собирает
+узнаваемые ориентиры (церковь, памятник, башня, дом, мост) и
+надписи OCR.
 
-Файлов этап не создаёт. Полные пути к кадрам получаются через
-storage.resolve(artifact) по folder-relative ссылкам из stages.
+Файлов этап не создаёт: кадры уже лежат в runs/<run_id>/.
 """
+
+from __future__ import annotations
 
 import math
 from collections import Counter
 from pathlib import Path
+from typing import Callable
 
 import cv2
 import numpy as np
 
-from app.storage import StorageService
-from app.utils.errors import SkipStage
-from app.services.visyalInspectorService.keyframes import collect_frames
 from app.utils.observations import observation
-from app.utils.timecodes import numeric_time, timestamp
+from app.utils.timecodes import numeric_time
 
 
 LANDMARK_LABELS = {
@@ -45,21 +44,33 @@ LANDMARK_MIN_AREA = 1.0
 MAX_REPORTED_FRAMES = 160
 
 
-def extract_landmarks(
-    storage: StorageService,
+def extract_geometry(
+    frames: list[dict],
+    visual_result: dict,
     stages: dict,
-    progress,
+    progress: Callable[[float, str], None],
 ) -> dict:
-    frames = collect_frames(stages)
+    """Собрать геометрию кадров и узнаваемые ориентиры.
+
+    Возвращает frames (горизонт, точка схода, симметрия, силуэт,
+    ориентиры, надписи), сводку landmarks и geometry.
+    """
 
     if not frames:
-        raise SkipStage(
-            "Нет кадров для поиска ориентиров: визуальные "
-            "этапы не завершены."
-        )
+        return {
+            "frames": [],
+            "frame_count_total": 0,
+            "landmarks": [],
+            "geometry": {},
+            "landmark_count": 0,
+            "observations": [],
+            "note": (
+                "Нет кадров для оценки геометрии и ориентиров."
+            ),
+        }
 
     ocr = _ocr_by_time(stages)
-    objects = _objects_by_time(stages)
+    objects = _objects_by_time(visual_result)
 
     analyzed = []
 
@@ -76,9 +87,9 @@ def extract_landmarks(
         if not artifact:
             continue
 
-        path = storage.resolve(artifact)
+        path = Path(frame["path"]) if frame.get("path") else None
 
-        if not path.is_file():
+        if path is None or not path.is_file():
             continue
 
         moment = round(float(frame["timestamp"]), 3)
@@ -107,15 +118,39 @@ def extract_landmarks(
         })
 
     if not analyzed:
-        raise SkipStage(
-            "Не удалось прочитать ни одного кадра."
-        )
+        return {
+            "frames": [],
+            "frame_count_total": 0,
+            "landmarks": [],
+            "geometry": {},
+            "landmark_count": 0,
+            "observations": [],
+            "note": (
+                "Не удалось прочитать ни одного кадра для "
+                "геометрии и ориентиров."
+            ),
+        }
 
     progress(100, "Ориентиры и геометрия готовы")
 
     summary = _summary(analyzed)
-
     text = _summary_text(summary)
+
+    observations = [
+        observation(
+            source="place_profile",
+            start=analyzed[0]["timestamp"],
+            end=analyzed[-1]["timestamp"],
+            text=text,
+            extractor="opencv-geometry",
+            data={
+                "kind": "landmarks_summary",
+                "landmarks": summary["landmarks"],
+                "geometry": summary["geometry"],
+                "frame_count": len(analyzed),
+            },
+        )
+    ]
 
     return {
         "frames": analyzed[:MAX_REPORTED_FRAMES],
@@ -123,20 +158,7 @@ def extract_landmarks(
         "landmarks": summary["landmarks"],
         "geometry": summary["geometry"],
         "landmark_count": len(summary["landmarks"]),
-        "observations": [
-            observation(
-                source="landmarks",
-                start=analyzed[0]["timestamp"],
-                end=analyzed[-1]["timestamp"],
-                text=text,
-                extractor="opencv-geometry",
-                data={
-                    "landmarks": summary["landmarks"],
-                    "geometry": summary["geometry"],
-                    "frame_count": len(analyzed),
-                },
-            )
-        ],
+        "observations": observations,
         "note": (
             "Геометрия и ориентиры оценены по кадрам. Это "
             "признаки для сопоставления с картой и снимками, "
@@ -145,11 +167,12 @@ def extract_landmarks(
     }
 
 
-def _objects_by_time(stages: dict) -> dict:
-    result = stages.get("scene_objects", {}).get("result") or {}
+def _objects_by_time(visual_result: dict) -> dict:
+    """Разложить объекты visual_analysis по таймкодам."""
+
     collected = {}
 
-    for frame in result.get("frames") or []:
+    for frame in visual_result.get("frames") or []:
         if not isinstance(frame, dict):
             continue
 
@@ -177,6 +200,8 @@ def _objects_by_time(stages: dict) -> dict:
 
 
 def _ocr_by_time(stages: dict) -> dict:
+    """Разложить подтверждённые надписи OCR по таймкодам."""
+
     stage = stages.get("ocr", {})
 
     if stage.get("status") != "completed":
@@ -206,7 +231,14 @@ def _ocr_by_time(stages: dict) -> dict:
 
 
 def _geometry(path: Path):
-    image = cv2.imread(str(path))
+    """Посчитать геометрические признаки одного кадра."""
+
+    data = np.fromfile(str(path), dtype=np.uint8)
+
+    if not data.size:
+        return None
+
+    image = cv2.imdecode(data, cv2.IMREAD_COLOR)
 
     if image is None:
         return None
@@ -274,6 +306,8 @@ def _geometry(path: Path):
 
 
 def _horizon(horizontal, gray, height):
+    """Оценить линию горизонта по горизонтальным отрезкам."""
+
     if horizontal:
         return float(np.median([
             (y1 + y2) / 2 / height
@@ -297,6 +331,8 @@ def _horizon(horizontal, gray, height):
 
 
 def _vanishing(perspective, width, height):
+    """Оценить точку схода по пересечениям перспективных линий."""
+
     if len(perspective) < 2:
         return None
 
@@ -341,6 +377,8 @@ def _vanishing(perspective, width, height):
 
 
 def _intersection(first, second):
+    """Пересечение двух отрезков или None для параллельных."""
+
     x1, y1, x2, y2 = first
     x3, y3, x4, y4 = second
 
@@ -365,6 +403,8 @@ def _intersection(first, second):
 
 
 def _symmetry(gray):
+    """Оценить симметрию кадра относительно вертикальной оси."""
+
     height, width = gray.shape
     half = width // 2
     left = gray[:, :half].astype(np.float32)
@@ -390,6 +430,8 @@ def _symmetry(gray):
 
 
 def _skyline(gray):
+    """Оценить силуэт застройки по первым градиентам колонок."""
+
     height, width = gray.shape
     gradient = np.abs(
         np.diff(gray.astype(np.float32), axis=0)
@@ -425,6 +467,8 @@ def _geometry_text(
     symmetry,
     roughness,
 ):
+    """Собрать текстовое описание геометрии кадра."""
+
     parts = [f"горизонт на {horizon * 100:.0f}% высоты"]
 
     if vanishing:
@@ -462,6 +506,8 @@ def _geometry_text(
 
 
 def _summary(frames):
+    """Свести ориентиры и геометрию по кадрам."""
+
     landmarks = {}
 
     for frame in frames:
@@ -553,6 +599,8 @@ def _summary(frames):
 
 
 def _summary_text(summary):
+    """Собрать текст сводки по ориентирам и геометрии."""
+
     lines = []
 
     landmarks = summary["landmarks"]

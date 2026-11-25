@@ -8,6 +8,7 @@ import "./styles/dossier.css";
 import "./styles/landmarks.css";
 import "./styles/keyframes.css";
 import "./styles/insights.css";
+import "./styles/analysisPanels.css";
 import "./styles/responsive.css";
 
 createRoot(document.getElementById("root")).render(<App />);

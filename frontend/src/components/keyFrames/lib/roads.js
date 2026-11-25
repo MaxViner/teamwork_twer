@@ -6,8 +6,10 @@ import {
 import { roundTime } from "./format.js";
 
 export function roadSegments(job) {
-  const stage = job?.stages?.road_geometry;
+  const place = job?.stages?.place_profile;
+  const stage = place || job?.stages?.road_geometry;
   const observations = stage?.observations || [];
+  const road = place?.result?.road || job?.stages?.road_geometry?.result;
 
   const segments = [];
 
@@ -29,7 +31,10 @@ export function roadSegments(job) {
       continue;
     }
 
-    if (observation.source !== "road_geometry") {
+    if (
+      observation.source !== "road_geometry"
+      && observation.source !== "place_profile"
+    ) {
       continue;
     }
 
@@ -43,7 +48,7 @@ export function roadSegments(job) {
     });
   }
 
-  if (stage?.result?.episode_schema_version === 1) {
+  if (road?.episode_schema_version === 1) {
     return segments;
   }
 
@@ -55,7 +60,8 @@ export function roadSegments(job) {
 }
 
 export function semanticRoadFrames(job) {
-  const result = job?.stages?.scene_objects?.result;
+  const result = job?.stages?.visual_analysis?.result
+    || job?.stages?.scene_objects?.result;
 
   if (
     result?.method

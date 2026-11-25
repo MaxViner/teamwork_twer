@@ -64,7 +64,9 @@ def _box(value):
 
 def _candidates(stages):
     """Never reinterpret heuristic-fallback classes as model detections."""
-    stage = (stages.get("scene_objects") or {}) if isinstance(stages, dict) else {}
+    stage = {}
+    if isinstance(stages, dict):
+        stage = stages.get("visual_analysis") or stages.get("scene_objects") or {}
     if stage.get("status") not in ("completed", "partial"):
         return []
     if any(row.get("review") == "rejected" for row in _rows(stage.get("observations"))):

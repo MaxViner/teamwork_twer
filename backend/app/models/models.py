@@ -24,15 +24,21 @@ class AnalyzeOptions(BaseModel):
     metadata: bool = True
     speech: bool = True
     ocr: bool = True
-    scene_objects: bool = True
-    faces: bool = True
-    visual_profile: bool = True
+    visual_analysis: bool = True
+    place_profile: bool = True
     location_evidence: bool = True
-    road_geometry: bool = True
     audio_structure: bool = True
     structure: bool = True
     summary: bool = True
     video_structure: bool = True
+    location_prompt: bool = True
+
+    # Старые имена оставлены для совместимости с существующими
+    # клиентами и job.json; новые этапы читают их как fallback.
+    scene_objects: bool = True
+    faces: bool = True
+    visual_profile: bool = True
+    road_geometry: bool = True
     comprehension: bool = True
     landmarks: bool = True
     ai_prompt: bool = True
@@ -93,6 +99,11 @@ class Observation(BaseModel):
         "comprehension",
         "landmarks",
         "ai_prompt",
+        "visual_analysis",
+        "place_profile",
+        "location_prompt",
+        "odometry",
+        "bev",
     ]
 
 

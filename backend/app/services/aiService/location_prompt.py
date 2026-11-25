@@ -77,16 +77,20 @@ def build_location_prompt(
 
     progress(35, "Отправляю отчёт в AI")
 
-    answer = client.generate_text(
-        PROMPT.format(
-            report=json.dumps(
-                compact,
-                ensure_ascii=False,
-                indent=2,
-            )
-        ),
-        system=SYSTEM,
-    )
+    try:
+        answer = client.generate_text(
+            PROMPT.format(
+                report=json.dumps(
+                    compact,
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            ),
+            system=SYSTEM,
+        )
+
+    except client.AiNotConfigured as error:
+        raise SkipStage(str(error)) from None
 
     prompt = str(answer.get("text") or "").strip()
 
@@ -94,6 +98,11 @@ def build_location_prompt(
         raise RuntimeError(
             "AI вернул пустой поисковый промпт."
         )
+
+    artifact = storage.save_text(
+        "location_prompt.md",
+        prompt,
+    )
 
     progress(100, "Поисковый промпт готов")
 
@@ -117,12 +126,14 @@ def build_location_prompt(
                 or []
             ),
         },
+        "artifact": storage.relative(artifact),
         "observations": [
             observation(
-                source="ai_prompt",
+                source="location_prompt",
                 start=0.0,
                 end=0.0,
                 text=prompt,
+                artifact=storage.relative(artifact),
                 extractor="ai-service",
                 data={
                     "kind": "location_search_prompt",
@@ -166,11 +177,16 @@ def _fallback_evidence(stages: dict, error: str) -> dict:
     summary = (
         (stages.get("summary") or {}).get("result") or {}
     )
-    landmarks = (
+    place = (
+        (stages.get("place_profile") or {}).get("result") or {}
+    )
+    landmarks = place or (
         (stages.get("landmarks") or {}).get("result") or {}
     )
     objects = (
-        (stages.get("scene_objects") or {}).get("result") or {}
+        (stages.get("visual_analysis") or {}).get("result")
+        or (stages.get("scene_objects") or {}).get("result")
+        or {}
     )
 
     return {

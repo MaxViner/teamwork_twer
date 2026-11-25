@@ -264,10 +264,15 @@ def _visual_evidence(
     stages: dict,
     duration: float,
 ) -> list[dict]:
-    result = stages.get("visual_profile", {}).get(
+    result = stages.get("visual_analysis", {}).get(
         "result",
         {},
     )
+    if not result:
+        result = stages.get("visual_profile", {}).get(
+            "result",
+            {},
+        )
     profile = result.get("profile") or {}
 
     if not profile:
@@ -305,10 +310,17 @@ def _road_evidence(
     stages: dict,
     duration: float,
 ) -> list[dict]:
-    result = stages.get("road_geometry", {}).get(
-        "result",
-        {},
+    result = (
+        stages.get("place_profile", {})
+        .get("result", {})
+        .get("road")
+        or {}
     )
+    if not result:
+        result = stages.get("road_geometry", {}).get(
+            "result",
+            {},
+        )
     summary = result.get("summary") or {}
 
     if not summary.get("road_detected"):
@@ -378,10 +390,15 @@ def _scene_evidence(
     stages: dict,
     duration: float,
 ) -> list[dict]:
-    result = stages.get("scene_objects", {}).get(
+    result = stages.get("visual_analysis", {}).get(
         "result",
         {},
     )
+    if not result:
+        result = stages.get("scene_objects", {}).get(
+            "result",
+            {},
+        )
     frames = result.get("frames", [])
 
     if not frames:
@@ -533,22 +550,36 @@ def _limit(evidence: list[dict]) -> list[dict]:
 
 
 def _profile(stages: dict) -> dict:
-    visual = stages.get("visual_profile", {}).get(
+    visual_result = stages.get("visual_analysis", {}).get(
         "result",
         {},
-    ).get("profile") or {}
+    )
+    if not visual_result:
+        visual_result = stages.get("visual_profile", {}).get(
+            "result",
+            {},
+        )
+    visual = visual_result.get("profile") or {}
 
-    road = stages.get("road_geometry", {}).get(
-        "result",
-        {},
-    ).get("summary") or {}
+    road_result = (
+        stages.get("place_profile", {})
+        .get("result", {})
+        .get("road")
+        or {}
+    )
+    if not road_result:
+        road_result = stages.get("road_geometry", {}).get(
+            "result",
+            {},
+        )
+    road = road_result.get("summary") or {}
 
     audio = stages.get("audio_structure", {}).get(
         "result",
         {},
     ).get("profile") or {}
 
-    scene = stages.get("scene_objects", {}).get(
+    scene = visual_result or stages.get("scene_objects", {}).get(
         "result",
         {},
     )

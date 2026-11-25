@@ -49,12 +49,14 @@ export function buildFrames(job, roads) {
     }
   };
 
-  for (const frame of frameResult(job, "visual_profile")) {
-    add(frame);
-  }
+  const visualStages = job?.stages?.visual_analysis
+    ? ["visual_analysis"]
+    : ["visual_profile", "scene_objects"];
 
-  for (const frame of frameResult(job, "scene_objects")) {
-    add(frame);
+  for (const stageId of visualStages) {
+    for (const frame of frameResult(job, stageId)) {
+      add(frame);
+    }
   }
 
   for (const frame of frameResult(job, "ocr")) {

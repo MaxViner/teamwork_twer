@@ -120,16 +120,30 @@ def _run_selected_stage(job_id: str, stage: str) -> None:
         })
 
 
+def _ensure_stage(job: dict, stage: str) -> dict:
+    """Создать состояние этапа в старом job.json при повторе."""
+    return job["stages"].setdefault(stage, {
+        "status": "pending",
+        "run_id": None,
+        "result_run_id": None,
+        "result": {},
+        "observations": [],
+        "history": [],
+        "error": None,
+        "note": None,
+    })
+
+
 def _mark_stage(job_id: str, stage: str, patch: dict) -> None:
     def update(job):
-        job["stages"][stage].update(patch)
+        _ensure_stage(job, stage).update(patch)
 
     mutate_job(job_id, update)
 
 
 def _begin_stage(job_id: str, stage: str, run_id: str) -> None:
     def begin(job):
-        state = job["stages"][stage]
+        state = _ensure_stage(job, stage)
 
         if state["run_id"] is not None:
             state["history"].append({
@@ -164,7 +178,7 @@ def _complete_stage(
     run_id: str,
 ) -> None:
     def complete(job):
-        job["stages"][stage].update(
+        _ensure_stage(job, stage).update(
             status="completed",
             result_run_id=run_id,
             result=result,
@@ -216,7 +230,7 @@ def schedule(job_id: str, selected: list[str]) -> None:
         )
 
         for stage in selected:
-            job["stages"][stage].update(
+            _ensure_stage(job, stage).update(
                 status="pending",
                 error=None,
                 note=None,

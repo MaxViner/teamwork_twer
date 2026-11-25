@@ -1,7 +1,7 @@
 export const COMBINED_SOURCES = [
-    "scene_objects",
-    "visual_profile",
-    "road_geometry",
+    "visual_analysis",
+    "place_profile",
+    "location_prompt",
 ];
 
 
@@ -14,11 +14,12 @@ export const STAGE_ORDER = [
     "audio_structure",
     "ocr",
     "structure",
-    "scene_objects",
-    "visual_profile",
-    "road_geometry",
+    "visual_analysis",
+    "place_profile",
     "location_evidence",
-    "ai_prompt",
+    "summary",
+    "video_structure",
+    "location_prompt",
 ];
 
 
@@ -31,11 +32,12 @@ export const STAGE_LABELS = {
     audio_structure: "Звуковая структура",
     ocr: "Текст на кадрах",
     structure: "Повторы и связи кадров",
-    scene_objects: "Объекты и признаки места",
-    visual_profile: "Визуальный профиль места",
-    road_geometry: "Геометрия дороги",
+    visual_analysis: "Визуальный анализ",
+    place_profile: "Профиль места",
     location_evidence: "Географические улики",
-    ai_prompt: "AI-промпт для поиска места",
+    summary: "Конспект",
+    video_structure: "Структура видео",
+    location_prompt: "AI-промпт для поиска места",
 };
 
 
@@ -48,11 +50,12 @@ export const STAGE_COUNT_LABELS = {
     audio_structure: "Звуковых событий",
     ocr: "Текстовых фрагментов",
     structure: "Повторов",
-    scene_objects: "Уникальных объектов",
-    visual_profile: "Проанализированных кадров",
-    road_geometry: "Участков с геометрией дороги",
+    visual_analysis: "Уникальных объектов",
+    place_profile: "Эпизодов и ориентиров",
     location_evidence: "Географических улик",
-    ai_prompt: "Поисковых промптов",
+    summary: "Тезисов",
+    video_structure: "Разделов",
+    location_prompt: "Поисковых промптов",
 };
 
 
@@ -93,4 +96,7 @@ export const SOURCE_LABELS = {
     road_geometry: "Геометрия дороги",
     location_evidence: "Географические улики",
     ai_prompt: "AI-промпт",
+    visual_analysis: "Визуальный анализ",
+    place_profile: "Профиль места",
+    location_prompt: "Поисковый промпт",
 };

@@ -1,7 +1,9 @@
 import { useMemo } from "react";
 
 export function useRoadEpisodesData(job) {
-  const roadStage = job?.stages?.road_geometry;
+  const place = job?.stages?.place_profile;
+  const roadStage = place || job?.stages?.road_geometry;
+  const road = place?.result?.road || roadStage?.result;
 
   const roadRejected = roadStage?.observations?.some((item) => (
     item.review === "rejected"
@@ -9,8 +11,8 @@ export function useRoadEpisodesData(job) {
   ));
 
   const episodes = useMemo(
-    () => (roadRejected ? [] : roadStage?.result?.episodes || []),
-    [roadRejected, roadStage?.result?.episodes],
+    () => (roadRejected ? [] : road?.episodes || []),
+    [roadRejected, road?.episodes],
   );
 
   return episodes;

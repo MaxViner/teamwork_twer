@@ -4,15 +4,12 @@ export const DEFAULT_UPLOAD_OPTIONS = {
     audio_structure: true,
     ocr: true,
     structure: true,
-    scene_objects: true,
-    faces: true,
-    visual_profile: true,
-    road_geometry: true,
+    visual_analysis: true,
+    place_profile: true,
     location_evidence: true,
     summary: true,
     video_structure: true,
-    comprehension: true,
-    landmarks: true,
+    location_prompt: true,
 
 
     language: null,
@@ -59,30 +56,16 @@ export const UPLOAD_TOGGLES = [
 
 
     {
-        name: "scene_objects",
-        title: "Определять объекты и признаки места",
-        description: "Находит дорогу, здания, деревья, воду и другие видимые элементы сцены.",
+        name: "visual_analysis",
+        title: "Анализировать кадры",
+        description: "Метрики, семантика SegFormer, объекты YOLOv8n и анонимные лица за один проход.",
     },
 
 
     {
-        name: "faces",
-        title: "Находить лица и людей",
-        description: "Отмечает лица и объединяет похожие в анонимные метки «Человек N». Личность не устанавливается.",
-    },
-
-
-    {
-        name: "visual_profile",
-        title: "Строить визуальный профиль места",
-        description: "Оценивает освещённость, погоду, сезон и тип ландшафта по кадрам.",
-    },
-
-
-    {
-        name: "road_geometry",
-        title: "Определять геометрию дороги",
-        description: "Оценивает направление и изгиб видимой дороги для будущего сопоставления с картой.",
+        name: "place_profile",
+        title: "Строить профиль места",
+        description: "Дорога, геометрия кадров, ориентиры, одометрия и топологическая BEV-карта.",
     },
 
 
@@ -108,15 +91,8 @@ export const UPLOAD_TOGGLES = [
 
 
     {
-        name: "comprehension",
-        title: "Готовить вопросы по содержанию",
-        description: "Строит вопросы и ответы по фактам видео для проверки понимания.",
-    },
-
-
-    {
-        name: "landmarks",
-        title: "Определять ориентиры и геометрию кадров",
-        description: "Ищет церкви, памятники, башни и дома, оценивает горизонт и точку схода для сопоставления с картой.",
+        name: "location_prompt",
+        title: "Формировать поисковый промпт",
+        description: "AI собирает накопленные улики в готовое задание для геолокатора. Требует настроенного AI-провайдера.",
     },
 ];

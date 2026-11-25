@@ -10,16 +10,12 @@ const STAGE_ORDER = [
   "audio_structure",
   "ocr",
   "structure",
-  "scene_objects",
-  "faces",
-  "visual_profile",
-  "road_geometry",
+  "visual_analysis",
+  "place_profile",
   "location_evidence",
   "summary",
   "video_structure",
-  "comprehension",
-  "landmarks",
-  "ai_prompt",
+  "location_prompt",
 ];
 
 const STAGE_LABELS = {
@@ -30,16 +26,12 @@ const STAGE_LABELS = {
   audio_structure: "Аудиопрофиль",
   ocr: "Текст на кадрах",
   structure: "Повторы",
-  scene_objects: "Объекты и типы сцен",
-  faces: "Лица",
-  visual_profile: "Визуальный профиль",
-  road_geometry: "Геометрия дороги",
+  visual_analysis: "Визуальный анализ",
+  place_profile: "Профиль места",
   location_evidence: "Локационное досье",
   summary: "Конспект",
   video_structure: "Структура видео",
-  comprehension: "Проверка понимания",
-  landmarks: "Ориентиры",
-  ai_prompt: "AI-промпт для поиска места",
+  location_prompt: "AI-промпт для поиска места",
 };
 
 const STATUS_LABELS = {

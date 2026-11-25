@@ -15,14 +15,16 @@ GROUP_GAP_SECONDS = 30.0
 
 
 def collect_frames(stages: dict) -> list[dict]:
-    """Собирает кадры visual_profile, scene_objects и OCR по таймкоду."""
+    """Собирает кадры visual_analysis (или старых стадий) и OCR."""
     collected = {}
 
-    for stage_name in (
-        "visual_profile",
-        "scene_objects",
-        "ocr",
-    ):
+    visual_stages = (
+        ("visual_analysis",)
+        if (stages.get("visual_analysis") or {}).get("status") == "completed"
+        else ("visual_profile", "scene_objects")
+    )
+
+    for stage_name in (*visual_stages, "ocr"):
         stage = stages.get(stage_name) or {}
         result = stage.get("result") or {}
 
@@ -42,6 +44,7 @@ def collect_frames(stages: dict) -> list[dict]:
                 "objects": [],
                 "descriptors": {},
                 "metrics": {},
+                "detections": [],
             })
 
             if not item["artifact"] and frame.get("artifact"):
@@ -55,6 +58,9 @@ def collect_frames(stages: dict) -> list[dict]:
 
             if isinstance(frame.get("metrics"), dict):
                 item["metrics"] = frame["metrics"]
+
+            if isinstance(frame.get("detections"), list):
+                item["detections"] = frame["detections"]
 
     return [
         collected[key]

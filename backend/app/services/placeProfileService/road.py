@@ -1,33 +1,29 @@
-"""Дорожные признаки по отдельным кадрам и временным эпизодам.
+"""Дорожные признаки для стадии place_profile.
 
-Кривые и положения объектов выражены в координатах изображения. Эпизод
-объединяет близкие наблюдения, но не доказывает, что это одна дорога или
-что разные ракурсы пространственно совмещены.
+Модуль перенесён из visyalInspectorService.road_geometry и не зависит
+от старых стадий. Кадры приходят готовым списком (их отбирает
+stage.py), а объекты и метрики — из результата visual_analysis.
 
-Все файловые операции идут через StorageService. stage_frames — общая
-утилита mediaService — вызывается с folder=storage.folder и
-run_folder=storage.run_dir, поэтому «path»/«artifact» в кадрах
-остаются такими же, как при старой сигнатуре (folder, run_folder).
+Кривые и положения объектов выражены в координатах изображения.
+Эпизод объединяет близкие наблюдения, но не доказывает, что это одна
+дорога или что разные ракурсы пространственно совмещены.
 """
+
+from __future__ import annotations
 
 import math
 from bisect import bisect_right
 from collections import Counter
-from pathlib import Path
+from typing import Callable
 
 import cv2
 import numpy as np
 
-from app.storage import StorageService
-from app.utils.errors import SkipStage
-from app.services.mediaService.frames import analysis_frame_count, stage_frames
 from app.utils.observations import observation
-from app.services.visyalInspectorService.visual_profile import analyze_frame
+
 
 ROAD_SEMANTIC_LABELS = {"road", "path", "bridge"}
 SEMANTIC_ROAD_MIN_PERCENT = 1.0
-DEFAULT_ROAD_FRAMES = 500
-MAX_ROAD_FRAMES = 2000
 EPISODE_MAX_GAP = 5.0
 EPISODE_MAX_DURATION = 30.0
 BEND_LABELS = {
@@ -43,90 +39,116 @@ CONTEXT_LABELS = {
 }
 
 
-def extract_road_geometry(
-    storage: StorageService,
+def extract_road(
+    frames: list[dict],
+    visual_result: dict,
     stages: dict,
-    progress,
-    video: Path | None = None,
-    duration: float = 0.0,
-    options: dict | None = None,
+    duration: float,
+    progress: Callable[[float, str], None],
 ) -> dict:
-    options = options or {}
+    """Найти признаки дороги на готовых кадрах.
 
-    if video is None or not math.isfinite(duration) or duration <= 0:
-        raise SkipStage(
-            "Нет подготовленного видео для анализа дороги."
-        )
-
-    requested = analysis_frame_count(options)
-    frames = stage_frames(
-        folder=storage.folder,
-        run_folder=storage.run_dir,
-        video=video,
-        duration=duration,
-        stages=stages,
-        count=requested,
-        prefix="road",
-    )
+    Возвращает summary, episodes, schematic и наблюдение-сводку.
+    Пустой список кадров — не ошибка: результат будет с
+    road_detected=False.
+    """
 
     if not frames:
-        raise SkipStage(
-            "Нет кадров для анализа геометрии дороги."
-        )
+        return {
+            "summary": _summarize([], 0),
+            "episodes": [],
+            "schematic": _schematic([]),
+            "episode_schema_version": 1,
+            "errors": [],
+            "error_count": 0,
+            "requested_frames": 0,
+            "sampled_frames": 0,
+            "read_frames": 0,
+            "detected_frames": 0,
+            "rejected_without_road": 0,
+            "rejected_weak": 0,
+            "observations": [],
+            "note": (
+                "Достаточных признаков дороги в выборке не найдено; "
+                "это не доказывает её отсутствия."
+            ),
+        }
 
     detections = []
     errors = []
     read_frames = 0
     rejected_without_road = 0
     rejected_weak = 0
-    object_frames = _frames_by_time(stages, "scene_objects", method="segformer")
-    visual_frames = _frames_by_time(stages, "visual_profile")
+
+    object_frames = _object_frames(visual_result)
+    visual_frames = _metric_frames(visual_result)
 
     for index, frame in enumerate(frames):
         timestamp = float(frame["timestamp"])
         tick = _time_key(timestamp)
+
         try:
             image = cv2.imdecode(
-                np.fromfile(frame["path"], dtype=np.uint8), cv2.IMREAD_COLOR,
+                np.fromfile(frame["path"], dtype=np.uint8),
+                cv2.IMREAD_COLOR,
             )
+
             if image is None:
                 raise ValueError("Не удалось декодировать кадр.")
+
             read_frames += 1
 
             objects = object_frames.get(tick)
+
             # Чужой ракурс не подтверждает и не опровергает этот кадр.
             evidence = None if objects is None else sum(
                 float(item.get("area_percent") or 0)
                 for item in objects.get("objects", [])
                 if item.get("label") in ROAD_SEMANTIC_LABELS
             )
+
             if evidence is not None and evidence < SEMANTIC_ROAD_MIN_PERCENT:
                 rejected_without_road += 1
                 continue
 
             geometry = analyse_road(image)
+
             if geometry is None:
                 rejected_weak += 1
                 continue
 
             if evidence is None:
                 cached_metrics = visual_frames.get(tick, {}).get("metrics")
-                metrics = cached_metrics or analyze_frame(frame["path"])
+                metrics = cached_metrics or _quick_metrics(frame["path"])
+
                 if not _heuristic_road_ok(geometry, metrics):
                     rejected_weak += 1
                     continue
 
-            geometry["evidence_source"] = "heuristic" if evidence is None else "segformer"
-            geometry["semantic_road_percent"] = None if evidence is None else round(evidence, 2)
+            geometry["evidence_source"] = (
+                "heuristic" if evidence is None else "segformer"
+            )
+            geometry["semantic_road_percent"] = (
+                None if evidence is None else round(evidence, 2)
+            )
+
             detections.append({
                 "timestamp": timestamp,
                 "artifact": frame["artifact"],
                 "sample_index": index,
                 "geometry": geometry,
-                "context": _road_context(objects, geometry["image_geometry"]),
+                "context": _road_context(
+                    objects,
+                    geometry["image_geometry"],
+                ),
             })
+
         except Exception as error:
-            errors.append({"timestamp": timestamp, "error": str(error)[:500]})
+            errors.append({
+                "timestamp": timestamp,
+                "error": str(error)[:500],
+            })
+
         finally:
             progress(
                 (index + 1) / len(frames) * 99,
@@ -134,41 +156,55 @@ def extract_road_geometry(
             )
 
     if not read_frames:
-        raise RuntimeError("Не удалось прочитать ни одного кадра для анализа дороги.")
+        raise RuntimeError(
+            "Не удалось прочитать ни одного кадра для анализа дороги."
+        )
 
-    summary = _summarize([item["geometry"] for item in detections], len(frames))
-    episodes = _build_episodes(detections, stages, duration / len(frames))
+    summary = _summarize(
+        [item["geometry"] for item in detections],
+        len(frames),
+    )
+    step = duration / max(len(frames), 1)
+    episodes = _build_episodes(detections, stages, step)
     schematic = _schematic(episodes)
     summary["episode_count"] = len(episodes)
-    observations = _build_observations(detections, summary, schematic)
 
     progress(100, "Анализ геометрии дороги завершён")
 
     return {
         "summary": summary,
-        "observations": observations,
+        "observations": _build_observations(
+            detections,
+            summary,
+            schematic,
+        ),
         "episodes": episodes,
         "schematic": schematic,
         "episode_schema_version": 1,
         "errors": errors[:20],
         "error_count": len(errors),
-        "requested_frames": requested,
+        "requested_frames": len(frames),
         "sampled_frames": len(frames),
         "read_frames": read_frames,
         "detected_frames": len(detections),
         "rejected_without_road": rejected_without_road,
         "rejected_weak": rejected_weak,
         "note": (
-            "Эпизоды объединяют близкие по времени находки, а не подтверждённые локации. "
-            "Изгибы и положение объектов даны в перспективе камеры. "
-            "Примыкания, расстояния, азимут и тождество дороги между ракурсами не установлены."
+            "Эпизоды объединяют близкие по времени находки, "
+            "а не подтверждённые локации. Изгибы и положение "
+            "объектов даны в перспективе камеры. Примыкания, "
+            "расстояния, азимут и тождество дороги между "
+            "ракурсами не установлены."
             if episodes else
-            "Достаточных признаков дороги в выборке не найдено; это не доказывает её отсутствия."
+            "Достаточных признаков дороги в выборке не найдено; "
+            "это не доказывает её отсутствия."
         ),
     }
 
 
 def analyse_road(image) -> dict | None:
+    """Оценить геометрию дороги на одном кадре."""
+
     height, width = image.shape[:2]
 
     lines = detect_road_lines(image)
@@ -218,13 +254,22 @@ def analyse_road(image) -> dict | None:
         abs(left_curve) + abs(right_curve)
     ) / 2
 
-    image_geometry = _image_geometry(left_fit, right_fit, left, right, width, height)
+    image_geometry = _image_geometry(
+        left_fit,
+        right_fit,
+        left,
+        right,
+        width,
+        height,
+    )
+
     if image_geometry is None:
         return None
 
     direction = BEND_LABELS[image_geometry["bend_class"]]
     near = image_geometry["rows"][-1]
     spacing_ratio = near["right_x"] - near["left_x"]
+
     if spacing_ratio >= 0.75:
         width_label = "широкий видимый коридор в кадре"
     elif spacing_ratio >= 0.35:
@@ -275,6 +320,8 @@ def analyse_road(image) -> dict | None:
 
 
 def detect_road_lines(image):
+    """Найти отрезки-кандидаты дорожных границ через Hough."""
+
     gray = cv2.cvtColor(
         image,
         cv2.COLOR_BGR2GRAY,
@@ -318,6 +365,8 @@ def detect_road_lines(image):
 
 
 def _fit(points: list[tuple[float, float]]):
+    """Подогнать параболу x(y) по точкам границы."""
+
     if len(points) < 3:
         return None
 
@@ -327,6 +376,7 @@ def _fit(points: list[tuple[float, float]]):
         [item[1] for item in points],
         dtype=np.float64,
     )
+
     if len(np.unique(ys)) < 3:
         return None
 
@@ -347,6 +397,8 @@ def _fit(points: list[tuple[float, float]]):
 
 
 def _fit_x(fit, y: float) -> float | None:
+    """Значение x параболы в строке y."""
+
     if fit is None:
         return None
 
@@ -358,6 +410,8 @@ def _vanishing_row(
     right_fit,
     height: int,
 ) -> float | None:
+    """Найти строку, где границы коридора сходятся."""
+
     difference = left_fit - right_fit
 
     try:
@@ -391,6 +445,8 @@ def _marking_ratio(
     height: int,
     width: int,
 ) -> dict:
+    """Оценить долю белой и жёлтой разметки внутри коридора."""
+
     mask = np.zeros(
         (height, width),
         dtype=np.uint8,
@@ -451,6 +507,8 @@ def _summarize(
     geometries: list[dict],
     sampled_frames: int,
 ) -> dict:
+    """Свести геометрию дороги по кадрам в один профиль."""
+
     if not geometries:
         return {
             "road_detected": False,
@@ -550,6 +608,8 @@ def _summarize(
 
 
 def _geometry_text(geometry: dict) -> str:
+    """Собрать короткое текстовое описание дороги в кадре."""
+
     parts = [
         f"Дорога: {geometry['direction']}",
         geometry["width_label"],
@@ -573,40 +633,78 @@ def _geometry_text(geometry: dict) -> str:
 
 
 def _time_key(timestamp: float) -> int:
+    """Ключ таймкода для сопоставления кадров."""
+
     return round(float(timestamp) * 1_000_000)
 
 
-def _frames_by_time(stages: dict, name: str, method: str | None = None) -> dict:
-    stage = stages.get(name) or {}
-    if stage.get("status") != "completed":
+def _object_frames(visual_result: dict) -> dict:
+    """Взять кадры семантической разметки из visual_analysis."""
+
+    if visual_result.get("method") != "segformer":
         return {}
-    result = stage.get("result") or {}
-    if method is not None and result.get("method") != method:
-        return {}
-    return {_time_key(frame["timestamp"]): frame for frame in result.get("frames", [])}
+
+    return {
+        _time_key(frame["timestamp"]): frame
+        for frame in visual_result.get("frames") or []
+        if frame.get("timestamp") is not None
+    }
+
+
+def _metric_frames(visual_result: dict) -> dict:
+    """Взять метрики кадров из visual_analysis."""
+
+    return {
+        _time_key(frame["timestamp"]): frame
+        for frame in visual_result.get("frames") or []
+        if frame.get("timestamp") is not None
+    }
+
+
+def _quick_metrics(path) -> dict:
+    """Посчитать метрики кадра, если их нет в visual_analysis."""
+
+    from app.services.visualAnalysisService.metrics import analyze_frame
+
+    return analyze_frame(path)
 
 
 def _image_geometry(left_fit, right_fit, left, right, width, height) -> dict | None:
+    """Построить нормализованные строки коридора и класс изгиба."""
+
     # Не экстраполируем коридор за общий вертикальный диапазон опор линий.
     far_y = max(min(y for _, y in left), min(y for _, y in right))
     near_y = min(max(y for _, y in left), max(y for _, y in right))
+
     if near_y - far_y < 0.10 * height:
         return None
+
     rows = []
+
     for fraction in (0.0, 0.25, 0.5, 0.75, 1.0):
         y = far_y + (near_y - far_y) * fraction
         lx = _fit_x(left_fit, y) / width
         rx = _fit_x(right_fit, y) / width
+
         if not (0 <= lx < rx <= 1) or rx - lx < 0.025:
             return None
-        rows.append({"y": round(y / height, 4), "left_x": round(lx, 4),
-                     "right_x": round(rx, 4), "center_x": round((lx + rx) / 2, 4)})
+
+        rows.append({
+            "y": round(y / height, 4),
+            "left_x": round(lx, 4),
+            "right_x": round(rx, 4),
+            "center_x": round((lx + rx) / 2, 4),
+        })
 
     # Отклонение середины от хорды: отдельно для обеих границ.
     # Для визуального изгиба вправо середина лежит левее хорды.
-    offsets = [rows[2][key] - (rows[0][key] + rows[-1][key]) / 2
-               for key in ("left_x", "right_x")]
+    offsets = [
+        rows[2][key] - (rows[0][key] + rows[-1][key]) / 2
+        for key in ("left_x", "right_x")
+    ]
+
     threshold = 0.012
+
     if max(abs(value) for value in offsets) < threshold:
         bend = "straight"
     elif min(offsets) >= threshold:
@@ -615,54 +713,92 @@ def _image_geometry(left_fit, right_fit, left, right, width, height) -> dict | N
         bend = "right"
     else:
         bend = "uncertain"
-    return {"space": "image_normalized_top_left", "rows": rows,
-            "bend_class": bend, "edge_chord_offsets": [round(v, 4) for v in offsets]}
+
+    return {
+        "space": "image_normalized_top_left",
+        "rows": rows,
+        "bend_class": bend,
+        "edge_chord_offsets": [round(v, 4) for v in offsets],
+    }
 
 
 def _road_context(frame: dict | None, geometry: dict) -> list[dict]:
+    """Собрать объекты рядом с дорогой и их сторону в кадре."""
+
     if frame is None:
         return []
+
     rows = geometry["rows"]
     clues = []
+
     for obj in frame.get("objects", []):
         label = obj.get("label")
         bbox = obj.get("bbox")
         score = float(obj.get("confidence") or 0)
+
         if label not in CONTEXT_LABELS or not bbox or len(bbox) != 4 or score < 0.45:
             continue
+
         x1, y1, x2, y2 = bbox
+
         if not (0 <= x1 < x2 <= 1 and 0 <= y1 < y2 <= 1):
             continue
+
         side = "unknown"
+
         if rows[0]["y"] <= y2 <= rows[-1]["y"]:
             grid = [row["y"] for row in rows]
             left = float(np.interp(y2, grid, [row["left_x"] for row in rows]))
             right = float(np.interp(y2, grid, [row["right_x"] for row in rows]))
+
             if x2 <= left:
                 side = "left"
             elif x1 >= right:
                 side = "right"
             else:
                 side = "image_overlap"
-        clues.append({"label": label, "label_ru": obj.get("label_ru") or label,
-                      "image_side": side, "bbox": bbox, "model_score": score,
-                      "evidence_source": "segformer", "artifact": frame["artifact"]})
+
+        clues.append({
+            "label": label,
+            "label_ru": obj.get("label_ru") or label,
+            "image_side": side,
+            "bbox": bbox,
+            "model_score": score,
+            "evidence_source": "segformer",
+            "artifact": frame["artifact"],
+        })
+
     return sorted(clues, key=lambda item: -item["model_score"])[:6]
 
 
-def _build_episodes(detections: list[dict], stages: dict, sample_step: float) -> list[dict]:
+def _build_episodes(
+    detections: list[dict],
+    stages: dict,
+    sample_step: float,
+) -> list[dict]:
+    """Сгруппировать кадры с дорогой в последовательные эпизоды."""
+
     scene_stage = stages.get("scenes") or {}
     intervals = (scene_stage.get("result") or {}).get("intervals", [])
-    cuts = sorted(float(start) for start, _ in intervals) if scene_stage.get("status") == "completed" else []
+    cuts = (
+        sorted(float(start) for start, _ in intervals)
+        if scene_stage.get("status") == "completed"
+        else []
+    )
+
     max_gap = min(EPISODE_MAX_GAP, max(0.4, 2.5 * sample_step))
     groups = []
+
     for detection in detections:
         timestamp = detection["timestamp"]
+
         if not groups:
             groups.append([detection])
             continue
+
         group = groups[-1]
         previous = group[-1]
+
         if (
             timestamp - previous["timestamp"] > max_gap
             or timestamp - group[0]["timestamp"] > EPISODE_MAX_DURATION
@@ -675,52 +811,85 @@ def _build_episodes(detections: list[dict], stages: dict, sample_step: float) ->
 
     episodes = []
     offset = 0
+
     for group in groups:
-        counts = Counter(item["geometry"]["image_geometry"]["bend_class"] for item in group)
+        counts = Counter(
+            item["geometry"]["image_geometry"]["bend_class"]
+            for item in group
+        )
         dominant, support = counts.most_common(1)[0]
-        classification = dominant if support >= 2 and support / len(group) >= 0.6 else "uncertain"
+        classification = (
+            dominant
+            if support >= 2 and support / len(group) >= 0.6
+            else "uncertain"
+        )
+
         references = {0, len(group) - 1}
         references.add(max(range(len(group)), key=lambda i: (
             bool(group[i]["context"]),
             group[i]["geometry"]["evidence_source"] == "segformer",
             group[i]["geometry"]["confidence"],
         )))
+
         # По одному примеру каждого вида изгиба помимо первого/последнего кадра.
         for bend in counts:
-            references.add(next(i for i, item in enumerate(group)
-                                if item["geometry"]["image_geometry"]["bend_class"] == bend))
+            references.add(next(
+                i for i, item in enumerate(group)
+                if item["geometry"]["image_geometry"]["bend_class"] == bend
+            ))
+
         clues = {}
+
         for item in group:
             for obj in item["context"]:
                 key = obj["label"], obj["image_side"]
                 before = clues.get(key)
+
                 if before is None or before["model_score"] < obj["model_score"]:
                     clues[key] = {**obj, "timestamp": item["timestamp"]}
+
         episodes.append({
             "id": f"road-{len(episodes) + 1:04d}",
-            "start": group[0]["timestamp"], "end": group[-1]["timestamp"],
-            "frame_count": len(group), "segment_offset": offset,
-            "segment_end_index": offset + len(group),  # исключающая правая граница
-            "bend_class": classification, "bend_label": BEND_LABELS[classification],
+            "start": group[0]["timestamp"],
+            "end": group[-1]["timestamp"],
+            "frame_count": len(group),
+            "segment_offset": offset,
+            "segment_end_index": offset + len(group),
+            "bend_class": classification,
+            "bend_label": BEND_LABELS[classification],
             "bend_counts": dict(counts),
             "width_label": _most_common(
                 item["geometry"].get("width_label")
                 for item in group
             ),
             "reference_frames": [
-                {"timestamp": group[i]["timestamp"], "artifact": group[i]["artifact"],
-                 "segment_index": offset + i}
+                {
+                    "timestamp": group[i]["timestamp"],
+                    "artifact": group[i]["artifact"],
+                    "segment_index": offset + i,
+                }
                 for i in sorted(references)
             ],
-            "context_clues": sorted(clues.values(), key=lambda item: -item["model_score"])[:6],
-            "segformer_frames": sum(item["geometry"]["evidence_source"] == "segformer" for item in group),
-            "requires_review": True, "map_match_ready": False,
+            "context_clues": sorted(
+                clues.values(),
+                key=lambda item: -item["model_score"],
+            )[:6],
+            "segformer_frames": sum(
+                item["geometry"]["evidence_source"] == "segformer"
+                for item in group
+            ),
+            "requires_review": True,
+            "map_match_ready": False,
         })
+
         offset += len(group)
+
     return episodes
 
 
 def _most_common(values) -> str | None:
+    """Самое частое непустое значение."""
+
     counts = Counter(
         value for value in values if value
     )
@@ -729,13 +898,13 @@ def _most_common(values) -> str | None:
 
 
 def _schematic(episodes: list[dict]) -> dict:
-    """
-    Относительная схема дороги по эпизодам.
+    """Построить относительную схему дороги по эпизодам.
 
     Это последовательность видимых изгибов и повторяющихся
     ориентиров. Она не является планом местности: расстояния и
     азимут не измерены, ракурсы не совмещены.
     """
+
     if not episodes:
         return {
             "schema_version": 1,
@@ -834,8 +1003,7 @@ def _heuristic_road_ok(
     geometry: dict,
     metrics: dict | None,
 ) -> bool:
-    """
-    Запасная проверка без семантической модели.
+    """Запасная проверка дороги без семантической модели.
 
     Линии сами по себе слишком часто приходят от зданий,
     деревьев и приборной панели. Поэтому нужны и разметка,
@@ -881,13 +1049,7 @@ def _build_observations(
     summary: dict,
     schematic: dict | None = None,
 ) -> list[dict]:
-    """
-    Складывает все кадры с дорогой в одно наблюдение-сводку.
-
-    Список сегментов хранит таймкод каждого кадра, поэтому
-    карточка занимает одну строку интерфейса, а переходы
-    к отдельным кадрам остаются доступны.
-    """
+    """Сложить кадры с дорогой в одно наблюдение place_profile."""
 
     if not detections:
         return []
@@ -907,9 +1069,7 @@ def _build_observations(
             "width_label": geometry["width_label"],
             "markings": geometry["markings"],
             "confidence": geometry["confidence"],
-            "evidence_source": geometry.get(
-                "evidence_source"
-            ),
+            "evidence_source": geometry.get("evidence_source"),
             "semantic_road_percent": geometry.get(
                 "semantic_road_percent"
             ),
@@ -948,7 +1108,7 @@ def _build_observations(
 
     return [
         observation(
-            source="road_geometry",
+            source="place_profile",
             start=segments[0]["start"],
             end=segments[-1]["end"],
             text=text,

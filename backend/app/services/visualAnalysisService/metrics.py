@@ -1,25 +1,22 @@
-"""Визуальный профиль кадров.
+"""Метрики кадра для консолидированной стадии visual_analysis.
 
-Без нейросетей измеряет яркость, контраст, насыщенность, долю неба,
-зелени, воды, снега, асфальта и песка, плотность краёв и текстуры.
-Профиль всех кадров сохраняется как одно наблюдение-сводка, а
-отдельные кадры доступны списком таймкодов.
+Здесь живут чистые функции без файловой системы: яркость, контраст,
+насыщенность, доли неба/зелени/воды/снега/асфальта, плотность краёв
+и текстуры. Раньше эти функции были в visual_profile.py; новый
+модуль не зависит от старых сервисов, чтобы их можно было удалить
+без поломки visual_analysis.
 
-Файловые операции идут через StorageService: stage_frames получает
-folder=storage.folder и run_folder=storage.run_dir. Публичные
-analyze_frame/describe_metrics не касаются раскладки — их также
-используют road_geometry и scene_objects.
+Модуль не импортирует torch и transformers: это быстрые расчёты на
+numpy и Pillow.
 """
+
+from __future__ import annotations
 
 import statistics
 from collections import Counter
 from pathlib import Path
 
 import numpy as np
-
-from app.storage import StorageService
-from app.services.mediaService.frames import analysis_frame_count, stage_frames
-from app.utils.observations import observation
 
 
 METRIC_KEYS = (
@@ -46,140 +43,14 @@ METRIC_KEYS = (
 )
 
 
-DEFAULT_VISUAL_FRAMES = 500
-MAX_VISUAL_FRAMES = 2000
-MAX_ERROR_EXAMPLES = 20
-
-
-def extract_visual_profile(
-    storage: StorageService,
-    video: Path,
-    duration: float,
-    stages: dict,
-    options: dict,
-    progress,
-) -> dict:
-    count = analysis_frame_count(options)
-    frames = stage_frames(
-        folder=storage.folder,
-        run_folder=storage.run_dir,
-        video=video,
-        duration=duration,
-        stages=stages,
-        count=count,
-        prefix="visual",
-    )
-
-    if not frames:
-        raise RuntimeError("Не удалось получить кадры для анализа.")
-
-    segments = []
-    analyzed = []
-    errors = []
-    error_count = 0
-
-    for index, frame in enumerate(frames):
-        progress(
-            index / len(frames) * 99,
-            f"Визуальный профиль: кадр {index + 1} из {len(frames)}",
-        )
-
-        try:
-            metrics = analyze_frame(frame["path"])
-            descriptors = describe_metrics(metrics)
-        except (OSError, ValueError) as error:
-            error_count += 1
-            if len(errors) < MAX_ERROR_EXAMPLES:
-                errors.append({
-                    "timestamp": frame["timestamp"],
-                    "artifact": frame["artifact"],
-                    "error": str(error)[:500],
-                })
-            continue
-
-        analyzed.append({
-            "timestamp": frame["timestamp"],
-            "artifact": frame["artifact"],
-            "metrics": metrics,
-            "descriptors": descriptors,
-        })
-
-        segments.append({
-            "start": round(float(frame["timestamp"]), 6),
-            "end": round(float(frame["timestamp"]), 6),
-            "text": _observation_text(descriptors),
-            "artifact": frame["artifact"],
-        })
-
-    if not analyzed:
-        raise RuntimeError(
-            "Не удалось проанализировать ни одного кадра визуального профиля. "
-            + errors[0]["error"]
-        )
-
-    profile = aggregate_profile(analyzed)
-
-    observations = _build_observations(
-        segments,
-        profile,
-    )
-
-    progress(100, "Визуальный профиль сформирован")
-
-    return {
-        "frames": analyzed,
-        "requested_frames": count,
-        "sampled_frames": len(frames),
-        "successful_frames": len(analyzed),
-        "error_count": error_count,
-        "errors": errors,
-        "profile": profile,
-        "observations": observations,
-        "segment_count": len(segments),
-        "note": (
-            "Освещённость, погода, сезон и тип ландшафта "
-            "оценены по цвету и текстуре кадров. Это "
-            "предварительные признаки, а не точное место."
-            + (f" Не удалось обработать кадров: {error_count}." if error_count else "")
-        ),
-    }
-
-
-def _build_observations(
-    segments: list[dict],
-    profile: dict,
-) -> list[dict]:
-    """Складывает профиль всех кадров в одно наблюдение-сводку."""
-
-    if not segments:
-        return []
-
-    text = (
-        _observation_text(profile)
-        if profile
-        else "Визуальный профиль кадров сформирован."
-    )
-
-    return [
-        observation(
-            source="visual_profile",
-            start=segments[0]["start"],
-            end=segments[-1]["end"],
-            text=text,
-            extractor="pillow-numpy-visual-profile",
-            data={
-                "kind": "visual_profile_summary",
-                "segment_count": len(segments),
-                "segments": segments,
-                "machine_generated": True,
-                "requires_review": True,
-                "time_is_approximate": True,
-            },
-        )
-    ]
-
-
 def analyze_frame(path: Path) -> dict:
+    """Посчитать визуальные метрики одного кадра.
+
+    Кадр уменьшается до 256 пикселей по большей стороне: метрики
+    описывают сцену, а не мелкие детали. Возвращает словарь чисел
+    и палитру доминирующих цветов.
+    """
+
     from PIL import Image
 
     with Image.open(path) as source:
@@ -337,6 +208,13 @@ def analyze_frame(path: Path) -> dict:
 
 
 def describe_metrics(metrics: dict) -> dict:
+    """Перевести числа метрик в словесное описание сцены.
+
+    Возвращает освещённость, погоду, сезон, список признаков
+    ландшафта, сложность сцены и палитру. Формулировки намеренно
+    осторожные: это гипотезы по цвету и текстуре.
+    """
+
     brightness = metrics["brightness"]
     contrast = metrics["contrast"]
     saturation = metrics["saturation"]
@@ -426,6 +304,12 @@ def describe_metrics(metrics: dict) -> dict:
 
 
 def aggregate_profile(frames: list[dict]) -> dict:
+    """Свести метрики всех кадров в один профиль.
+
+    Числовые метрики берутся как медиана по кадрам, словесные —
+    как самое частое значение. Пустой список даёт пустой словарь.
+    """
+
     if not frames:
         return {}
 
@@ -491,21 +375,25 @@ def aggregate_profile(frames: list[dict]) -> dict:
     }
 
 
-def _observation_text(descriptors: dict) -> str:
+def observation_text(descriptors: dict) -> str:
+    """Собрать короткую фразу о визуальном профиле кадра."""
+
     landscape = ", ".join(
         descriptors.get("landscape", [])
     )
 
     return (
         f"Визуальный профиль: "
-        f"{descriptors['lighting']}; "
-        f"{descriptors['weather']}; "
-        f"{descriptors['season']}; "
-        f"сцена: {landscape}."
+        f"{descriptors.get('lighting', 'не определено')}; "
+        f"{descriptors.get('weather', 'не определено')}; "
+        f"{descriptors.get('season', 'не определено')}; "
+        f"сцена: {landscape or 'не определена'}."
     )
 
 
 def _palette(hue, saturation, value) -> list[str]:
+    """Выбрать до четырёх доминирующих цветовых групп кадра."""
+
     masks = (
         ("белый или снег", (value > 195) & (saturation < 30)),
         ("зелёный", (hue >= 45) & (hue <= 115) & (saturation >= 30)),

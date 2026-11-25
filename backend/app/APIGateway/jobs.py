@@ -206,7 +206,7 @@ def set_stage_progress(
                 state["progress_message"] = message
 
         total = sum(
-            STAGE_WEIGHTS[name] * percent / 100
+            STAGE_WEIGHTS.get(name, 0.0) * percent / 100
             for name, percent
             in job["stage_progress"].items()
         )
@@ -231,22 +231,44 @@ def stage_enabled(
     stage: str,
     options: dict,
 ) -> bool:
+    """Включён ли этап в настройках задания.
+
+    Консолидированные этапы читают новый ключ, а для старых job.json
+    откатываются на прежние флаги: visual_analysis объединяет
+    scene_objects, visual_profile и faces, place_profile — road_geometry
+    и landmarks, location_prompt — ai_prompt.
+    """
+
+    if stage == "visual_analysis":
+        if "visual_analysis" in options:
+            return bool(options["visual_analysis"])
+        return any(
+            bool(options.get(name, True))
+            for name in ("scene_objects", "visual_profile", "faces")
+        )
+
+    if stage == "place_profile":
+        if "place_profile" in options:
+            return bool(options["place_profile"])
+        return any(
+            bool(options.get(name, True))
+            for name in ("road_geometry", "landmarks")
+        )
+
+    if stage == "location_prompt":
+        if "location_prompt" in options:
+            return bool(options["location_prompt"])
+        return bool(options.get("ai_prompt", True))
+
     option_map = {
         "metadata": "metadata",
         "speech": "speech",
         "ocr": "ocr",
-        "scene_objects": "scene_objects",
-        "faces": "faces",
-        "visual_profile": "visual_profile",
         "location_evidence": "location_evidence",
-        "road_geometry": "road_geometry",
         "audio_structure": "audio_structure",
         "structure": "structure",
         "summary": "summary",
         "video_structure": "video_structure",
-        "comprehension": "comprehension",
-        "landmarks": "landmarks",
-        "ai_prompt": "ai_prompt",
         "visual": "visual",
         "audio_events": "audio_events",
     }
@@ -256,27 +278,9 @@ def stage_enabled(
 
     option_name = option_map[stage]
 
-    default = option_name in (
-        "metadata",
-        "speech",
-        "ocr",
-        "scene_objects",
-        "faces",
-        "visual_profile",
-        "location_evidence",
-        "road_geometry",
-        "audio_structure",
-        "structure",
-        "summary",
-        "video_structure",
-        "comprehension",
-        "landmarks",
-        "ai_prompt",
-    )
-
     return bool(
         options.get(
             option_name,
-            default,
+            True,
         )
     )

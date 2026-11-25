@@ -1,6 +1,6 @@
 import { useState } from "react";
 import Button from "../ui/Button.jsx";
-import "./AiPromptPanel.css";
+import "./LocationPromptPanel.css";
 
 
 const STATUS_LABELS = {
@@ -10,10 +10,10 @@ const STATUS_LABELS = {
 };
 
 
-export default function AiPromptPanel({ job, onRetry }) {
+export default function LocationPromptPanel({ job, onRetry }) {
     const [copied, setCopied] = useState(false);
 
-    const stage = job?.stages?.ai_prompt;
+    const stage = job?.stages?.location_prompt;
 
     if (!stage) {
         return null;
@@ -27,7 +27,7 @@ export default function AiPromptPanel({ job, onRetry }) {
 
     if (status === "completed" && prompt) {
         return (
-            <section className="panel ai-prompt-panel">
+            <section className="panel location-prompt-panel">
                 <div className="section-row">
                     <div>
                         <h2>Поисковый промпт (AI)</h2>
@@ -38,13 +38,13 @@ export default function AiPromptPanel({ job, onRetry }) {
                         </p>
                     </div>
 
-                    <span className="ai-prompt-panel__badge">
+                    <span className="location-prompt-panel__badge">
                         {result.provider || "AI"}
                         {result.model ? ` · ${result.model}` : ""}
                     </span>
                 </div>
 
-                <div className="ai-prompt-panel__actions">
+                <div className="location-prompt-panel__actions">
                     <Button
                         onClick={async () => {
                             try {
@@ -58,12 +58,32 @@ export default function AiPromptPanel({ job, onRetry }) {
                     >
                         {copied ? "Скопировано" : "Скопировать промпт"}
                     </Button>
+
+                    {result.artifact && (
+                        <a
+                            className="btn btn-ghost"
+                            href={`/api/jobs/${job.id}/files/${result.artifact}`}
+                            target="_blank"
+                            rel="noreferrer"
+                        >
+                            Открыть location_prompt.md
+                        </a>
+                    )}
                 </div>
 
-                <pre className="ai-prompt-panel__text">{prompt}</pre>
+                <pre className="location-prompt-panel__text">{prompt}</pre>
+
+                {result.input && (
+                    <p className="muted location-prompt-panel__note">
+                        Вход: текстовых улик {result.input.text_clues ?? 0},
+                        реплик {result.input.transcript_segments ?? 0},
+                        ориентиров {result.input.landmarks ?? 0},
+                        эпизодов дороги {result.input.road_episodes ?? 0}.
+                    </p>
+                )}
 
                 {result.note && (
-                    <p className="muted ai-prompt-panel__note">
+                    <p className="muted location-prompt-panel__note">
                         {result.note}
                     </p>
                 )}
@@ -73,14 +93,14 @@ export default function AiPromptPanel({ job, onRetry }) {
 
     if (status === "failed") {
         return (
-            <section className="panel ai-prompt-panel">
+            <section className="panel location-prompt-panel">
                 <h2>Поисковый промпт (AI)</h2>
-                <p className="ai-prompt-panel__error">
+                <p className="location-prompt-panel__error">
                     {stage.error || "Не удалось сформировать промпт."}
                 </p>
 
                 {onRetry && (
-                    <Button onClick={() => onRetry("ai_prompt")}>
+                    <Button onClick={() => onRetry("location_prompt")}>
                         Повторить этап
                     </Button>
                 )}
@@ -90,14 +110,14 @@ export default function AiPromptPanel({ job, onRetry }) {
 
     if (status === "skipped") {
         return (
-            <section className="panel ai-prompt-panel">
+            <section className="panel location-prompt-panel">
                 <h2>Поисковый промпт (AI)</h2>
                 <p className="muted">
-                    {stage.note || "Этап пропущен."}
+                    {stage.note || "Этап пропущен: AI-провайдер не настроен."}
                 </p>
 
                 {onRetry && (
-                    <Button onClick={() => onRetry("ai_prompt")}>
+                    <Button onClick={() => onRetry("location_prompt")}>
                         Повторить этап
                     </Button>
                 )}
@@ -106,7 +126,7 @@ export default function AiPromptPanel({ job, onRetry }) {
     }
 
     return (
-        <section className="panel ai-prompt-panel">
+        <section className="panel location-prompt-panel">
             <h2>Поисковый промпт (AI)</h2>
             <p className="muted">
                 {STATUS_LABELS[status] || "Этап ещё не завершён."}

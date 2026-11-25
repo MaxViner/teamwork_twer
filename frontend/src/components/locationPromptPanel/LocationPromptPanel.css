@@ -1,0 +1,40 @@
+.location-prompt-panel__badge {
+    align-self: flex-start;
+    padding: 4px 10px;
+    border-radius: 999px;
+    background: rgba(74, 144, 226, 0.12);
+    color: #2b5c91;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.location-prompt-panel__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin: 12px 0;
+}
+
+.location-prompt-panel__text {
+    margin: 0;
+    padding: 16px;
+    border-radius: 12px;
+    background: #f6f8fb;
+    border: 1px solid #e2e8f0;
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-family: "Consolas", "Menlo", monospace;
+    font-size: 13px;
+    line-height: 1.55;
+    max-height: 520px;
+    overflow: auto;
+}
+
+.location-prompt-panel__note {
+    margin-top: 10px;
+    font-size: 13px;
+}
+
+.location-prompt-panel__error {
+    color: #b42318;
+}

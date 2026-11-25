@@ -36,6 +36,7 @@ from app.APIGateway.jobs import (
     stage_enabled,
 )
 from app.APIGateway.pipeline import STAGES
+from app.APIGateway.test_endpoints import test_router
 from app.models.models import AnalyzeOptions, ReviewPatch
 from app.search import search_job
 from app.services.aiService import client as ai_client
@@ -93,6 +94,8 @@ appServer = FastAPI(
     title="Local Video Evidence",
     lifespan=lifespan,
 )
+
+appServer.include_router(test_router)
 
 
 @appServer.get("/api/jobs")
@@ -301,7 +304,7 @@ def describe_object(
 ):
     """AI-описание уникального объекта по лучшему кадру.
 
-    Результат сохраняется в scene_objects.result.unique_objects,
+    Результат сохраняется в visual_analysis.result.unique_objects,
     поэтому описание переживает перезагрузку страницы.
     """
     job = load_job(job_id)
@@ -312,7 +315,8 @@ def describe_object(
             "Дождитесь завершения обработки.",
         )
 
-    stage = (job.get("stages") or {}).get(
+    stages = job.get("stages") or {}
+    stage = stages.get("visual_analysis") or stages.get(
         "scene_objects",
     ) or {}
     item = find_unique_object(stage, label)
@@ -363,9 +367,10 @@ def describe_object(
     description = payload["description"]
 
     def update(current):
-        current_stage = (current.get("stages") or {}).get(
-            "scene_objects",
-        ) or {}
+        current_stages = current.get("stages") or {}
+        current_stage = current_stages.get(
+            "visual_analysis",
+        ) or current_stages.get("scene_objects") or {}
         current_item = find_unique_object(
             current_stage,
             label,
@@ -479,9 +484,8 @@ def retry_stage(job_id: str, stage: str):
             "scenes",
             "ocr",
             "structure",
-            "scene_objects",
-            "visual_profile",
-            "road_geometry",
+            "visual_analysis",
+            "place_profile",
             "location_evidence",
         ]
 
@@ -489,9 +493,8 @@ def retry_stage(job_id: str, stage: str):
         selected = [
             "ocr",
             "structure",
-            "scene_objects",
-            "visual_profile",
-            "road_geometry",
+            "visual_analysis",
+            "place_profile",
             "location_evidence",
         ]
 
@@ -501,22 +504,24 @@ def retry_stage(job_id: str, stage: str):
             "location_evidence",
         ]
 
-    elif stage == "scene_objects":
+    elif stage == "visual_analysis":
         selected = [
-            "scene_objects",
+            "visual_analysis",
+            "place_profile",
             "location_evidence",
         ]
 
-    elif stage == "visual_profile":
+    elif stage == "place_profile":
         selected = [
-            "visual_profile",
+            "place_profile",
             "location_evidence",
         ]
 
-    elif stage == "road_geometry":
+    elif stage == "location_prompt":
         selected = [
-            "road_geometry",
             "location_evidence",
+            "summary",
+            "location_prompt",
         ]
 
     elif stage == "speech":
@@ -729,13 +734,15 @@ def paged_roads(
 ):
     """Дорожные эпизоды постранично вместе со схемой."""
     job = load_job(job_id)
-    stage = (job.get("stages") or {}).get(
-        "road_geometry",
-    ) or {}
+    stages = job.get("stages") or {}
+    stage = stages.get("place_profile") or {}
     result = stage.get("result") or {}
+    road = result.get("road") or {}
+    if not road:
+        road = ((stages.get("road_geometry") or {}).get("result")) or {}
     episodes = [
         item
-        for item in result.get("episodes") or []
+        for item in road.get("episodes") or []
         if isinstance(item, dict)
     ]
 
@@ -750,8 +757,8 @@ def paged_roads(
 
     return {
         "episodes": visible,
-        "schematic": result.get("schematic") or {},
-        "summary": result.get("summary") or {},
+        "schematic": road.get("schematic") or {},
+        "summary": road.get("summary") or {},
         **bounds,
     }
 

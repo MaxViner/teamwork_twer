@@ -9,6 +9,12 @@
 
 from pathlib import Path
 
+# ─────────────────────────── модели ──────────────────────────
+
+# Корень пакета app и папка с ONNX-моделями (YOLOv8n и другие).
+APP_DIR = Path(__file__).resolve().parent
+MODELS_DIR = APP_DIR / "models"
+
 # ─────────────────────────── видео ───────────────────────────
 
 # Верхняя граница длительности. Длинные ролики обрабатываются
@@ -52,21 +58,17 @@ RESULT_FILENAME = "coordinates.json"
 # ─────────────────────────── этапы ───────────────────────────
 
 STAGE_WEIGHTS = {
-    "prepare": 4.0,
-    "metadata": 4.0,
-    "scenes": 8.0,
-    "speech": 12.0,
-    "audio_structure": 4.0,
-    "ocr": 12.0,
-    "structure": 4.0,
-    "scene_objects": 12.0,
-    "faces": 3.0,
-    "visual_profile": 8.0,
-    "road_geometry": 5.0,
+    "prepare": 3.0,
+    "metadata": 3.0,
+    "scenes": 5.0,
+    "speech": 9.0,
+    "audio_structure": 3.0,
+    "ocr": 9.0,
+    "structure": 3.0,
+    "visual_analysis": 22.0,
+    "place_profile": 18.0,
     "location_evidence": 8.0,
-    "summary": 5.0,
+    "summary": 4.0,
     "video_structure": 3.0,
-    "object_detection": 5.0,
-    "landmarks": 8.0,
-    "ai_prompt": 4.0,
+    "location_prompt": 10.0,
 }

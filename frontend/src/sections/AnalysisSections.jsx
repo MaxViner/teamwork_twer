@@ -1,13 +1,12 @@
 import LocationDossier from "../components/LocationDossier.jsx";
-import AiPromptPanel from "../components/aiPromptPanel/AiPromptPanel.jsx";
+import LocationPromptPanel from "../components/locationPromptPanel/LocationPromptPanel.jsx";
 import MapQueryPanel from "../components/mapQueryPanel/MapQueryPanel.jsx";
-import LandmarksPanel from "../components/LandmarksPanel.jsx";
 import KeyFramesPanel from "../components/keyFrames/KeyFramesPanel.jsx";
-import GeometryPanel from "../components/geometryPanel/GeometryPanel.jsx";
+import PlaceProfilePanel from "../components/placeProfilePanel/PlaceProfilePanel.jsx";
 import SummaryPanel from "../components/SummaryPanel.jsx";
 import StructurePanel from "../components/StructurePanel.jsx";
 import TranscriptPanel from "../components/TranscriptPanel.jsx";
-import FacesPanel from "../components/FacesPanel.jsx";
+import VisualAnalysisPanel from "../components/visualAnalysisPanel/VisualAnalysisPanel.jsx";
 
 function Section({ id, children }) {
     return (
@@ -25,28 +24,16 @@ export default function AnalysisSections({
 }) {
     return (
         <>
-            <Section id="section-ai-prompt">
-                <AiPromptPanel job={job} onRetry={onRetry} />
+            <Section id="section-visual-analysis">
+                <VisualAnalysisPanel job={job} onSeek={onSeek} />
             </Section>
 
-            <Section id="section-dossier">
-                <LocationDossier job={job} />
-            </Section>
-
-            <Section id="section-map-query">
-                <MapQueryPanel job={job} onSeek={onSeek} />
-            </Section>
-
-            <Section id="section-landmarks">
-                <LandmarksPanel job={job} onSeek={onSeek} />
+            <Section id="section-place-profile">
+                <PlaceProfilePanel job={job} onSeek={onSeek} />
             </Section>
 
             <Section id="section-keyframes">
                 <KeyFramesPanel job={job} onSeek={onSeek} />
-            </Section>
-
-            <Section id="section-geometry">
-                <GeometryPanel job={job} onSeek={onSeek} />
             </Section>
 
             <Section id="section-summary">
@@ -61,8 +48,16 @@ export default function AnalysisSections({
                 <TranscriptPanel job={job} onSeek={onSeek} />
             </Section>
 
-            <Section id="section-faces">
-                <FacesPanel job={job} onSeek={onSeek} />
+            <Section id="section-map-query">
+                <MapQueryPanel job={job} onSeek={onSeek} />
+            </Section>
+
+            <Section id="section-dossier">
+                <LocationDossier job={job} />
+            </Section>
+
+            <Section id="section-location-prompt">
+                <LocationPromptPanel job={job} onRetry={onRetry} />
             </Section>
         </>
     );

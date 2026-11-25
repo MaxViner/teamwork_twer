@@ -34,54 +34,29 @@ function stageCount(stageKey, stage) {
     }
 
 
-    if (stageKey === "scene_objects") {
-        if (typeof stage.result?.object_count === "number") {
-            return stage.result.object_count;
-        }
-
-
-        if (Array.isArray(stage.result?.unique_objects)) {
-            return stage.result.unique_objects.length;
-        }
-
-
-        if (Array.isArray(stage.result?.frames)) {
-            const labels = new Set();
-
-            for (const frame of stage.result.frames) {
-                for (const item of frame.objects || []) {
-                    if (item.label) {
-                        labels.add(item.label);
-                    }
-                }
-            }
-
-            if (labels.size) {
-                return labels.size;
-            }
-        }
-
-
-        return stage.observations?.length ?? 0;
-    }
-
-
-    if (stageKey === "visual_profile") {
+    if (stageKey === "visual_analysis") {
         return (
-            stage.result?.segment_count
-            ?? stage.result?.profile?.sampled_frames
+            stage.result?.object_count
+            ?? stage.result?.unique_objects?.length
+            ?? stage.result?.counts?.frames
             ?? stage.observations?.length
             ?? 0
         );
     }
 
 
-    if (stageKey === "road_geometry") {
+    if (stageKey === "place_profile") {
         return (
-            stage.result?.detected_frames
+            stage.result?.road?.summary?.detected_frames
+            ?? stage.result?.landmark_count
             ?? stage.observations?.length
             ?? 0
         );
+    }
+
+
+    if (stageKey === "location_prompt") {
+        return stage.result?.prompt ? 1 : 0;
     }
 
 

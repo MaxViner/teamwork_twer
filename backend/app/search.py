@@ -210,7 +210,9 @@ def _observations(job, stage_name):
 
 
 def _objects(job):
-    result = _stage(job, "scene_objects").get("result") or {}
+    result = _stage(job, "visual_analysis").get("result") or {}
+    if not result:
+        result = _stage(job, "scene_objects").get("result") or {}
     values = []
 
     for frame in result.get("frames") or []:
@@ -234,10 +236,14 @@ def _objects(job):
 
 
 def _landmarks(job):
-    result = _stage(job, "landmarks").get("result") or {}
+    result = _stage(job, "place_profile").get("result") or {}
+    frames = result.get("geometry_frames")
+    if frames is None:
+        result = _stage(job, "landmarks").get("result") or {}
+        frames = result.get("frames")
     values = []
 
-    for frame in result.get("frames") or []:
+    for frame in frames or []:
         if not isinstance(frame, dict):
             continue
 
@@ -267,7 +273,9 @@ def _landmarks(job):
 
 
 def _faces(job):
-    result = _stage(job, "faces").get("result") or {}
+    result = _stage(job, "visual_analysis").get("result") or {}
+    if not result:
+        result = _stage(job, "faces").get("result") or {}
     values = []
 
     for person in result.get("people") or []:

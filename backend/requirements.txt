@@ -10,3 +10,4 @@ faster-whisper
 easyocr
 transformers
 torch
+onnxruntime
