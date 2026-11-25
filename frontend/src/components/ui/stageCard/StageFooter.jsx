@@ -26,10 +26,19 @@ function stageCount(stageKey, stage) {
 
 
     if (stageKey === "audio_structure") {
+        const summary = stage.result?.sound_summary;
+        const soundCount = Array.isArray(summary)
+            ? summary.reduce(
+                (sum, item) => sum + (item.count || 0),
+                0,
+            )
+            : 0;
+
         return (
-            stage.result?.event_count
-            ?? stage.observations?.length
-            ?? 0
+            soundCount
+            || stage.result?.event_count
+            || stage.observations?.length
+            || 0
         );
     }
 

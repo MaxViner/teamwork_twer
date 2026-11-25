@@ -1,6 +1,6 @@
 import Finding from "./Finding.jsx";
 import FindingsFilters from "./FindingsFilters.jsx";
-import CollapsiblePanel from "../ui/CollapsiblePanel.jsx";
+import CollapsiblePanel from "../../ui/CollapsiblePanel.jsx";
 
 
 export default function FindingsPanel({ observations, jobId, busy, search, onSearchChange, sourceFilter, onSourceFilterChange, reviewFilter, onReviewFilterChange, onSeek, onSave, onError }) {

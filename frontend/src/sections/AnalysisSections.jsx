@@ -1,20 +1,16 @@
-import LocationDossier from "../components/LocationDossier.jsx";
-import LocationPromptPanel from "../components/locationPromptPanel/LocationPromptPanel.jsx";
+import { Section } from "../components/ui/Section.jsx";
+
 import MapQueryPanel from "../components/mapQueryPanel/MapQueryPanel.jsx";
 import KeyFramesPanel from "../components/keyFrames/KeyFramesPanel.jsx";
 import PlaceProfilePanel from "../components/placeProfilePanel/PlaceProfilePanel.jsx";
-import SummaryPanel from "../components/SummaryPanel.jsx";
-import StructurePanel from "../components/StructurePanel.jsx";
-import TranscriptPanel from "../components/TranscriptPanel.jsx";
-import VisualAnalysisPanel from "../components/visualAnalysisPanel/VisualAnalysisPanel.jsx";
+import LocationDossier from "../components/LocationDossier.jsx";
+import LocationPromptPanel from "../components/locationPromptPanel/LocationPromptPanel.jsx";
 
-function Section({ id, children }) {
-    return (
-        <section id={id} className="section-anchor-wrap">
-            {children}
-        </section>
-    );
-}
+import VisualAnalysisPanel from "../components/panels/visualAnalysisPanel/VisualAnalysisPanel.jsx";
+import AudioAnalysisPanel from "../components/panels/audioAnalysisPanel/AudioAnalysisPanel.jsx";
+import SummaryPanel from "../components/panels/summaryPanel/SummaryPanel.jsx";
+import StructurePanel from "../components/panels/structurePanel/StructurePanel.jsx";
+
 
 export default function AnalysisSections({
     job,
@@ -24,8 +20,15 @@ export default function AnalysisSections({
 }) {
     return (
         <>
+            {/* Визуальные признаки: сцены, текст на кадрах, объекты,
+                сегментация и лица — одна панель. */}
             <Section id="section-visual-analysis">
                 <VisualAnalysisPanel job={job} onSeek={onSeek} />
+            </Section>
+
+            {/* Речь и акустические признаки места — одна панель. */}
+            <Section id="section-audio-analysis">
+                <AudioAnalysisPanel job={job} onSeek={onSeek} />
             </Section>
 
             <Section id="section-place-profile">
@@ -42,10 +45,6 @@ export default function AnalysisSections({
 
             <Section id="section-structure">
                 <StructurePanel job={job} onSeek={onSeek} />
-            </Section>
-
-            <Section id="section-transcript">
-                <TranscriptPanel job={job} onSeek={onSeek} />
             </Section>
 
             <Section id="section-map-query">

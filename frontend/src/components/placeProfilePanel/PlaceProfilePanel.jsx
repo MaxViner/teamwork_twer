@@ -213,11 +213,69 @@ function LandmarksTab({ job, result, onSeek }) {
 }
 
 
+function TrajectoryPreview({ points }) {
+    if (!Array.isArray(points) || points.length < 2) {
+        return null;
+    }
+
+    const width = 280;
+    const height = 170;
+    const pad = 18;
+
+    const xs = points.map((point) => Number(point[0]) || 0);
+    const zs = points.map((point) => Number(point[2]) || 0);
+
+    const minX = Math.min(...xs);
+    const maxX = Math.max(...xs);
+    const minZ = Math.min(...zs);
+    const maxZ = Math.max(...zs);
+
+    const span = Math.max(maxX - minX, maxZ - minZ, 1e-6);
+    const scale = (Math.min(width, height) - pad * 2) / span;
+
+    const centerX = (minX + maxX) / 2;
+    const centerZ = (minZ + maxZ) / 2;
+
+    const coords = points.map((point) => {
+        const x = width / 2 + ((Number(point[0]) || 0) - centerX) * scale;
+        // Ось Z камеры — вперёд, рисуем её вверх.
+        const y = height / 2 - ((Number(point[2]) || 0) - centerZ) * scale;
+
+        return [x, y];
+    });
+
+    const first = coords[0];
+    const last = coords[coords.length - 1];
+
+    return (
+        <svg
+            className="trajectory-preview"
+            viewBox={`0 0 ${width} ${height}`}
+            role="img"
+            aria-label="Траектория движения камеры"
+        >
+            <polyline
+                points={coords.map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join(" ")}
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.5"
+                strokeLinejoin="round"
+                strokeLinecap="round"
+            />
+
+            <circle cx={first[0]} cy={first[1]} r="5" fill="currentColor" opacity="0.45" />
+            <circle cx={last[0]} cy={last[1]} r="5" fill="currentColor" />
+        </svg>
+    );
+}
+
+
 function OdometryTab({ result }) {
     const odometry = result.odometry || {};
     const trajectory = odometry.trajectory || {};
     const scale = odometry.scale || {};
     const skipped = Array.isArray(odometry.skipped) ? odometry.skipped : [];
+    const points = Array.isArray(trajectory.points) ? trajectory.points : [];
 
     return (
         <>
@@ -235,7 +293,33 @@ function OdometryTab({ result }) {
                     </div>
                     <div>
                         <dt>Точек траектории</dt>
-                        <dd>{trajectory.points?.length ?? 0}</dd>
+                        <dd>{points.length}</dd>
+                    </div>
+                    <div>
+                        <dt>Длина пути</dt>
+                        <dd>
+                            {trajectory.path_length ?? 0} усл.
+                            {trajectory.path_length_m != null
+                                ? ` · ≈ ${trajectory.path_length_m} м`
+                                : ""}
+                        </dd>
+                    </div>
+                    <div>
+                        <dt>Смещение</dt>
+                        <dd>
+                            {trajectory.displacement ?? 0} усл.
+                            {trajectory.displacement_m != null
+                                ? ` · ≈ ${trajectory.displacement_m} м`
+                                : ""}
+                        </dd>
+                    </div>
+                    <div>
+                        <dt>Суммарный поворот</dt>
+                        <dd>{trajectory.total_turn_deg ?? 0}°</dd>
+                    </div>
+                    <div>
+                        <dt>Итоговый курс</dt>
+                        <dd>{trajectory.net_turn_deg ?? 0}°</dd>
                     </div>
                     <div>
                         <dt>Масштаб</dt>
@@ -248,6 +332,17 @@ function OdometryTab({ result }) {
                     </div>
                 </dl>
             </div>
+
+            {points.length > 1 && (
+                <div className="insight-block">
+                    <h3>Схема маршрута</h3>
+                    <p className="muted">
+                        Вид сверху: старт — бледная точка, финиш — тёмная.
+                        Ориентация и масштаб условные.
+                    </p>
+                    <TrajectoryPreview points={points} />
+                </div>
+            )}
 
             {odometry.note && (
                 <p className="muted">{odometry.note}</p>
@@ -284,10 +379,14 @@ function BevTab({ job, result }) {
     if (!bev) {
         return (
             <p className="muted">
-                BEV не построена: нужно минимум три точки траектории.
+                BEV не построена: нужно минимум три точки траектории
+                с ненулевым смещением камеры.
             </p>
         );
     }
+
+    const stats = bev.trajectory_stats || {};
+    const grid = bev.grid || {};
 
     return (
         <div className="insight-block">
@@ -295,8 +394,8 @@ function BevTab({ job, result }) {
 
             <p className="muted">
                 {bev.note || "Без метрики."}
-                {bev.grid
-                    ? ` Сетка ${bev.grid.rows}×${bev.grid.cols}, ячейка ${bev.grid.cell_size_m} м.`
+                {grid.rows
+                    ? ` Сетка ${grid.rows}×${grid.cols}.`
                     : ""}
             </p>
 
@@ -315,6 +414,22 @@ function BevTab({ job, result }) {
             )}
 
             <dl className="profile-grid">
+                <div>
+                    <dt>Точек маршрута</dt>
+                    <dd>{stats.points ?? 0}</dd>
+                </div>
+                <div>
+                    <dt>Длина пути</dt>
+                    <dd>{stats.path_length ?? "—"} усл.</dd>
+                </div>
+                <div>
+                    <dt>Смещение</dt>
+                    <dd>{stats.displacement ?? "—"} усл.</dd>
+                </div>
+                <div>
+                    <dt>Поворот</dt>
+                    <dd>{stats.total_turn_deg ?? 0}°</dd>
+                </div>
                 <div>
                     <dt>Объектов</dt>
                     <dd>{bev.objects?.length ?? 0}</dd>

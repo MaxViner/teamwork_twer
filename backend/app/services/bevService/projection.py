@@ -51,11 +51,18 @@ def build_bev(
     rows = GRID_SIZE
     cols = GRID_SIZE
 
-    normalized = _normalize(projected, rows, cols)
+    normalized, units_per_cell = _normalize(projected, rows, cols)
+
+    if units_per_cell is None:
+        # Точки совпали: движения нет, карту строить не из чего.
+        return None
 
     objects = _objects(
         normalized,
         detections_per_frame,
+        trajectory.get("timestamps") or [],
+        rows,
+        cols,
     )
 
     road_mask = _road_mask(
@@ -71,8 +78,18 @@ def build_bev(
             "cell_size_m": float(cell_size_m or DEFAULT_CELL_M),
             "rows": rows,
             "cols": cols,
+            "units_per_cell": round(units_per_cell, 5),
         },
         "trajectory": normalized,
+        "trajectory_stats": {
+            "points": len(normalized),
+            "path_length": trajectory.get("path_length"),
+            "displacement": trajectory.get("displacement"),
+            "total_turn_deg": trajectory.get("total_turn_deg"),
+            "net_turn_deg": trajectory.get("net_turn_deg"),
+            "headings_deg": trajectory.get("headings_deg") or [],
+            "units": "relative",
+        },
         "objects": objects,
         "road_mask": road_mask,
         "scale_source": "relative_units",
@@ -108,8 +125,17 @@ def _normalize(
     points: list[list[float]],
     rows: int,
     cols: int,
-) -> list[list[int]]:
-    """Вписать точки в сетку с полями по краям."""
+) -> tuple[list[list[int]], float | None]:
+    """Вписать точки в сетку с сохранением пропорций.
+
+    Раньше оси масштабировались независимо, поэтому любой маршрут
+    растягивался на всю сетку и терял форму. Теперь используется
+    единый масштаб и центрирование: короткий путь занимает малую
+    часть карты, поворот виден как поворот.
+
+    Возвращает (точки, единиц_на_ячейку). Второе значение — None,
+    если все точки совпали.
+    """
 
     array = np.asarray(points, dtype=float)
 
@@ -119,34 +145,75 @@ def _normalize(
     min_x, max_x = float(x.min()), float(x.max())
     min_y, max_y = float(y.min()), float(y.max())
 
-    span_x = max(max_x - min_x, 1e-6)
-    span_y = max(max_y - min_y, 1e-6)
+    span_x = max_x - min_x
+    span_y = max_y - min_y
+    span = max(span_x, span_y)
 
-    usable_cols = cols - 2 * MARGIN_CELLS
-    usable_rows = rows - 2 * MARGIN_CELLS
+    if span <= 1e-9:
+        return [], None
+
+    usable_cols = max(1, cols - 2 * MARGIN_CELLS)
+    usable_rows = max(1, rows - 2 * MARGIN_CELLS)
+    usable = max(1, min(usable_cols, usable_rows) - 1)
+
+    scale = usable / span
+    center_x = (min_x + max_x) / 2.0
+    center_y = (min_y + max_y) / 2.0
+
+    center_col = (cols - 1) / 2.0
+    center_row = (rows - 1) / 2.0
 
     result = []
 
     for px, py in zip(x, y):
-        col = MARGIN_CELLS + int(
-            round((px - min_x) / span_x * (usable_cols - 1))
-        )
+        col = center_col + (px - center_x) * scale
         # Экранная ось Y растёт вниз; для карты разворачиваем.
-        row = MARGIN_CELLS + int(
-            round((max_y - py) / span_y * (usable_rows - 1))
-        )
+        row = center_row - (py - center_y) * scale
 
         result.append([
-            max(0, min(cols - 1, col)),
-            max(0, min(rows - 1, row)),
+            max(0, min(cols - 1, int(round(col)))),
+            max(0, min(rows - 1, int(round(row)))),
         ])
 
-    return result
+    return result, 1.0 / scale
+
+
+def _nearest_index(
+    timestamps: list,
+    moment,
+    fallback: int,
+    total_frames: int,
+    count: int,
+) -> int:
+    """Найти точку траектории, ближайшую по времени к кадру."""
+
+    usable = min(len(timestamps), count)
+
+    if usable and moment is not None:
+        try:
+            target = float(moment)
+
+        except (TypeError, ValueError):
+            target = None
+
+        if target is not None:
+            return min(
+                range(usable),
+                key=lambda index: abs(float(timestamps[index]) - target),
+            )
+
+    return min(
+        count - 1,
+        max(0, int(fallback / max(total_frames, 1) * count)),
+    )
 
 
 def _objects(
     trajectory: list[list[int]],
     detections_per_frame: list[dict],
+    timestamps: list,
+    rows: int,
+    cols: int,
 ) -> list[dict]:
     """Разместить детекции рядом с точкой маршрута своего кадра."""
 
@@ -164,9 +231,12 @@ def _objects(
             continue
 
         position = trajectory[
-            min(
-                len(trajectory) - 1,
-                int(index / total_frames * len(trajectory)),
+            _nearest_index(
+                timestamps,
+                frame.get("timestamp"),
+                index,
+                total_frames,
+                len(trajectory),
             )
         ]
 
@@ -196,7 +266,12 @@ def _objects(
                 "source_frame": index,
             })
 
-            cell = _object_cell(position, center_x)
+            cell = _object_cell(
+                position,
+                center_x,
+                rows,
+                cols,
+            )
 
             if cell not in entry["cells"]:
                 entry["cells"].append(cell)
@@ -207,16 +282,18 @@ def _objects(
 def _object_cell(
     position: list[int],
     center_x: float,
+    rows: int,
+    cols: int,
 ) -> list[int]:
     """Сместить объект вбок от траектории по его X в кадре."""
 
-    offset = int(round((center_x - 0.5) * 8))
+    offset = int(round((center_x - 0.5) * 10))
     col = position[0] + offset
     row = position[1] + 1
 
     return [
-        max(0, min(GRID_SIZE - 1, col)),
-        max(0, min(GRID_SIZE - 1, row)),
+        max(0, min(cols - 1, col)),
+        max(0, min(rows - 1, row)),
     ]
 
 

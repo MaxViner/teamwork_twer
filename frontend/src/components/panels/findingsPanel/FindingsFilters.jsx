@@ -1,4 +1,4 @@
-import { SOURCE_LABELS, REVIEW_LABELS, COMBINED_SOURCES } from "../../constants/labels.js";
+import { SOURCE_LABELS, REVIEW_LABELS, COMBINED_SOURCES } from "../../../constants/labels.js";
 
 export default function FindingsFilters({ search, onSearchChange, sourceFilter, onSourceFilterChange, reviewFilter, onReviewFilterChange }) {
   return (

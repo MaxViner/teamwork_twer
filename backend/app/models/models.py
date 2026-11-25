@@ -87,6 +87,7 @@ class Observation(BaseModel):
         "ocr",
         "audio_structure",
         "audio_event",
+        "audio_profile",
         "structure",
         "reappearance",
         "scene_objects",

@@ -358,33 +358,65 @@ def _audio_evidence(
         "result",
         {},
     )
+    summary = result.get("sound_summary") or []
     profile = result.get("profile") or {}
 
-    if not profile:
-        return []
+    evidence = []
 
-    text = (
-        f"Звуковой фон: {profile.get('environment')}; "
-        f"тишина {profile.get('silence_ratio', 0) * 100:.0f}%; "
-        f"громкие участки "
-        f"{profile.get('loud_ratio', 0) * 100:.0f}%"
-    )
+    # 1. Семантические звуки — приоритет (поезд, колокол, сирена…)
+    for item in summary[:6]:
+        evidence.append({
+            "kind": "sound_event",
+            "label": (
+                f"Идентифицированный звук: "
+                f"{item['label_ru']}"
+            ),
+            "text": (
+                f"«{item['label_ru']}» — "
+                f"{item['count']} участк., "
+                f"суммарно {item['total_seconds']} с"
+            ),
+            "confidence": min(
+                0.85,
+                float(item.get("max_confidence") or 0.3),
+            ),
+            "country_hints": {},
+            "start": 0.0,
+            "end": duration,
+            "artifact": None,
+            "frame_artifact": None,
+            "details": {
+                "sound_kind": item.get("kind"),
+                "importance": item.get("importance"),
+                "intervals": item.get("intervals", [])[:5],
+                "origin": "audio_semantic",
+            },
+        })
 
-    return [{
-        "kind": "audio_profile",
-        "label": "Звуковой фон места",
-        "text": text,
-        "confidence": 0.2,
-        "country_hints": {},
-        "start": 0.0,
-        "end": duration,
-        "artifact": None,
-        "frame_artifact": None,
-        "details": {
-            "profile": profile,
-        },
-    }]
+    # 2. Общий профиль — низкий приоритет
+    if profile:
+        evidence.append({
+            "kind": "audio_profile",
+            "label": "Акустическая обстановка",
+            "text": (
+                f"Фон: {profile.get('environment')}; "
+                f"тишина "
+                f"{profile.get('silence_ratio', 0) * 100:.0f}%"
+            ),
+            "confidence": 0.2,
+            "country_hints": {},
+            "start": 0.0,
+            "end": duration,
+            "artifact": None,
+            "frame_artifact": None,
+            "details": {
+                "environment": profile.get("environment"),
+                "silence_ratio": profile.get("silence_ratio"),
+                "loud_ratio": profile.get("loud_ratio"),
+            },
+        })
 
+    return evidence
 
 def _scene_evidence(
     stages: dict,

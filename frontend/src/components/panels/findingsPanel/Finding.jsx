@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
-import Button from "../ui/Button.jsx";
-import FrameGallery from "../ui/FrameGallery.jsx";
-import { SOURCE_LABELS, REVIEW_LABELS } from "../../constants/labels.js";
-import { fileUrl } from "../../utils/fileUrl.js";
-import { formatTime } from "../../utils/formatTime.js";
+import Button from "../../ui/Button.jsx";
+import FrameGallery from "../../ui/FrameGallery.jsx";
+import { SOURCE_LABELS, REVIEW_LABELS } from "../../../constants/labels.js";
+import { fileUrl } from "../../../utils/fileUrl.js";
+import { formatTime } from "../../../utils/formatTime.js";
 
 
 const EMPTY_SEGMENTS = [];

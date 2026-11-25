@@ -1,6 +1,6 @@
 import ErrorBanner from "../components/ui/ErrorBanner.jsx";
 import UploadPanel from "../components/ui/uploadPanel/UploadPanel.jsx";
-import JobsPanel from "../components/JobsPanel.jsx";
+import JobsPanel from "../components/panels/jobsPanel/JobsPanel.jsx";
 import FooterNav from "../layout/FooterNav.jsx";
 import PageHeader from "../layout/PageHeader.jsx";
 import JobStatusSection from "./JobStatusSection.jsx";
@@ -50,11 +50,7 @@ export default function VideoAnalysisApp() {
                     <InspectionShell
                         job={state.job}
                         observations={state.observations}
-                        visible={state.visible}
-                        busy={state.busy}
-                        filters={state.filters}
                         video={state.video}
-                        onSave={state.actions.handleSave}
                         onError={state.onError}
                         onRetry={state.actions.handleRetry}
                     />

@@ -1,5 +1,5 @@
-import Button from "./ui/Button.jsx";
-import CollapsiblePanel from "./ui/CollapsiblePanel.jsx";
+import Button from "../../ui/Button.jsx";
+import CollapsiblePanel from "../../ui/CollapsiblePanel.jsx";
 
 
 export default function JobsPanel({ jobs, selectedId, onSelect, onRefresh }) {

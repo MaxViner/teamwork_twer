@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { formatTime } from "../utils/formatTime.js";
+import { formatTime } from "../../../utils/formatTime.js";
 
 
 const TURNS_PER_PAGE = 40;
@@ -91,7 +91,7 @@ function speakerSummary(job) {
 }
 
 
-export default function TranscriptPanel({ job, onSeek }) {
+export default function TranscriptPanel({ job, onSeek, embedded = false }) {
     const segments = useMemo(() => speechSegments(job), [job]);
     const turns = useMemo(() => buildTurns(segments), [segments]);
     const speakers = useMemo(() => speakerSummary(job), [job]);
@@ -141,16 +141,18 @@ export default function TranscriptPanel({ job, onSeek }) {
     const hasSpeakers = segments.some((item) => item.speaker);
 
     return (
-        <section className="panel transcript-panel">
+        <section className={embedded ? "transcript-embedded" : "panel transcript-panel"}>
             <div className="section-row">
-                <div>
-                    <h2>Расшифровка речи</h2>
-                    <p className="muted">
-                        Полная расшифровка с таймкодами
-                        {hasSpeakers ? " и разделением по спикерам" : ""}.
-                        Нажмите на время, чтобы перейти к моменту.
-                    </p>
-                </div>
+                {!embedded && (
+                    <div>
+                        <h2>Расшифровка речи</h2>
+                        <p className="muted">
+                            Полная расшифровка с таймкодами
+                            {hasSpeakers ? " и разделением по спикерам" : ""}.
+                            Нажмите на время, чтобы перейти к моменту.
+                        </p>
+                    </div>
+                )}
 
                 <span className="insight-count">
                     {turns.length} реплик

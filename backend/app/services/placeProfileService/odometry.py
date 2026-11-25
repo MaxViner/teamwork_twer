@@ -49,6 +49,13 @@ def extract_odometry(
             "trajectory": {
                 "points": [],
                 "frame_indices": [],
+                "headings_deg": [],
+                "path_length": 0.0,
+                "displacement": 0.0,
+                "mean_step": 0.0,
+                "max_step": 0.0,
+                "total_turn_deg": 0.0,
+                "net_turn_deg": 0.0,
                 "units": "relative",
             },
             "pairs": [],
@@ -69,7 +76,6 @@ def extract_odometry(
 
     pairs: list[dict] = []
     skipped: list[dict] = []
-    poses: list[dict] = []
 
     for order, index in enumerate(indices):
         first = items[index]
@@ -115,11 +121,9 @@ def extract_odometry(
         }
 
         pairs.append(pose)
-        poses.append(result)
-
-    trajectory = _trajectory(poses, pairs, items)
 
     scale = estimate_scale(_device(stages), road_summary)
+    trajectory = _trajectory(pairs, items, scale)
 
     progress(100, "Одометрия завершена")
 
@@ -274,30 +278,43 @@ def _dynamic_mask(item: dict) -> np.ndarray:
 
 
 def _trajectory(
-    poses: list[dict],
     pairs: list[dict],
     items: list[dict],
+    scale: dict,
 ) -> dict:
-    """Накопить относительные смещения в ломаную."""
+    """Накопить относительные позы в ломаную с учётом поворотов."""
 
     accumulator = TrajectoryAccumulator()
 
-    for pose in poses:
-        accumulator.add(pose)
+    timestamps = [items[0]["timestamp"]]
+
+    for pair in pairs:
+        added = accumulator.add(
+            pair,
+            frame_index=pair["to"],
+        )
+
+        if added:
+            timestamps.append(pair["to_timestamp"])
 
     built = accumulator.build()
 
-    frame_indices = [items[0]["index"]] + [
-        pair["to"] for pair in pairs
-    ]
-
-    built["frame_indices"] = frame_indices[: len(built["points"])]
-    built["timestamps"] = (
-        [items[0]["timestamp"]]
-        + [pair["to_timestamp"] for pair in pairs]
-    )[: len(built["points"])]
-    built["units"] = "relative"
+    built["timestamps"] = timestamps[: len(built["points"])]
     built["pair_count"] = len(pairs)
+    built["scale_source"] = scale.get("source")
+    built["metric_estimate"] = True
+
+    # Грубая оценка метров: масштаб из scale.py, а не измерение.
+    m_per_unit = float(scale.get("m_per_unit") or 1.0)
+
+    built["path_length_m"] = round(
+        float(built.get("path_length") or 0.0) * m_per_unit,
+        2,
+    )
+    built["displacement_m"] = round(
+        float(built.get("displacement") or 0.0) * m_per_unit,
+        2,
+    )
 
     return built
 
@@ -330,6 +347,10 @@ def _build_observations(
         f"Одометрия: успешных пар {len(pairs)}, "
         f"пропущено {len(skipped)}; "
         f"средняя доля инлайеров {quality:.2f}. "
+        f"Длина пути ≈ {trajectory.get('path_length_m')} м, "
+        f"смещение ≈ {trajectory.get('displacement_m')} м, "
+        f"суммарный поворот "
+        f"{trajectory.get('total_turn_deg')}°. "
         f"Масштаб: {scale.get('source')} "
         f"(×{scale.get('m_per_unit')})."
     )
@@ -348,6 +369,12 @@ def _build_observations(
                 "mean_quality": round(quality, 3),
                 "scale": scale,
                 "trajectory_points": len(trajectory.get("points") or []),
+                "path_length": trajectory.get("path_length"),
+                "displacement": trajectory.get("displacement"),
+                "path_length_m": trajectory.get("path_length_m"),
+                "displacement_m": trajectory.get("displacement_m"),
+                "total_turn_deg": trajectory.get("total_turn_deg"),
+                "net_turn_deg": trajectory.get("net_turn_deg"),
                 "requires_review": True,
                 "map_match_ready": False,
             },

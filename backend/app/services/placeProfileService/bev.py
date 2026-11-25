@@ -39,6 +39,7 @@ def build_bev_artifact(
         {
             "timestamp": frame.get("timestamp"),
             "artifact": frame.get("artifact"),
+            "size": frame.get("size"),
             "detections": frame.get("detections") or [],
         }
         for frame in visual_result.get("frames") or []

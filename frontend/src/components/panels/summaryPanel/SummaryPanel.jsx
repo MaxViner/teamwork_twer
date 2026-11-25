@@ -1,4 +1,4 @@
-import { formatTime } from "../utils/formatTime.js";
+import { formatTime } from "../../../utils/formatTime.js";
 
 
 export default function SummaryPanel({ job, onSeek }) {

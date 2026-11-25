@@ -8,7 +8,7 @@ executor запускает анализатор, сохраняет резул�
 from concurrent.futures import ThreadPoolExecutor
 from threading import RLock
 from uuid import uuid4
-
+import psutil
 from fastapi import HTTPException
 
 from app.utils.errors import SkipStage

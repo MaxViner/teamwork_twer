@@ -1,8 +1,8 @@
-import { useEffect, useState } from "react";
-import { describeObject, fetchAiStatus } from "../../api/jobs.js";
-import { fileUrl } from "../../utils/fileUrl.js";
-import { formatTime } from "../../utils/formatTime.js";
-import AiDescription from "../landmarksPanel/AiDescription.jsx";
+import { useEffect, useMemo, useState } from "react";
+import { describeObject, fetchAiStatus } from "../../../api/jobs.js";
+import { fileUrl } from "../../../utils/fileUrl.js";
+import { formatTime } from "../../../utils/formatTime.js";
+import AiDescription from "../../landmarksPanel/AiDescription.jsx";
 
 
 const CATEGORY_ORDER = [
@@ -25,10 +25,14 @@ const CATEGORY_LABELS = {
 
 const TABS = [
     { id: "objects", label: "Объекты" },
+    { id: "scenes", label: "Сцены" },
+    { id: "ocr", label: "Текст" },
     { id: "detections", label: "YOLO-детекции" },
     { id: "segments", label: "Семантика" },
     { id: "faces", label: "Лица" },
 ];
+
+const OCR_PER_PAGE = 60;
 
 
 function resultOf(job) {
@@ -405,19 +409,206 @@ function FacesTab({ job, result, onSeek }) {
 }
 
 
-export default function VisualAnalysisPanel({ job, onSeek }) {
-    const [tab, setTab] = useState("objects");
-    const result = resultOf(job);
+function ScenesTab({ job, onSeek }) {
+    const stage = job?.stages?.scenes;
+    const result = stage?.result || {};
+    const intervals = Array.isArray(result.intervals) ? result.intervals : [];
+
+    if (!intervals.length) {
+        return (
+            <p className="muted">
+                {stage?.status === "skipped"
+                    ? stage.error || "Поиск сцен пропущен."
+                    : "Сцены не найдены."}
+            </p>
+        );
+    }
+
+    return (
+        <div className="insight-block">
+            <p className="muted">
+                Найдено сцен: {result.scene_count ?? intervals.length}.
+                Нажмите на время, чтобы перейти к началу сцены.
+            </p>
+
+            <ol className="transcript-list">
+                {intervals.map(([start, end], index) => (
+                    <li
+                        className="transcript-row"
+                        key={`${start}-${index}`}
+                    >
+                        <button
+                            className="insight-time"
+                            onClick={() => onSeek(start)}
+                        >
+                            {formatTime(start)}
+                        </button>
+
+                        <div className="transcript-text">
+                            Сцена {index + 1}
+                            {" · "}
+                            {formatTime(start)} — {formatTime(end)}
+                            <span className="muted">
+                                {" "}({Math.max(0, Math.round(end - start))} с)
+                            </span>
+                        </div>
+                    </li>
+                ))}
+            </ol>
+        </div>
+    );
+}
+
+
+function OcrTab({ job, onSeek }) {
+    const stage = job?.stages?.ocr;
+    const [page, setPage] = useState(1);
+
+    const items = useMemo(() => {
+        const list = stage?.observations;
+
+        if (!Array.isArray(list)) {
+            return [];
+        }
+
+        return list
+            .filter((item) => item && item.text)
+            .slice()
+            .sort((a, b) => (Number(a.start) || 0) - (Number(b.start) || 0));
+    }, [stage]);
 
     useEffect(() => {
-        setTab("objects");
+        setPage(1);
     }, [job?.id]);
 
-    if (!job?.stages?.visual_analysis) {
+    if (!items.length) {
+        const frameCount = stage?.result?.frames?.length ?? 0;
+
+        return (
+            <p className="muted">
+                {stage?.status === "skipped"
+                    ? stage.error || "Распознавание текста пропущено."
+                    : frameCount > 0
+                        ? `Проверено кадров: ${frameCount}. Читаемого текста не найдено.`
+                        : "Текст на кадрах не найден."}
+            </p>
+        );
+    }
+
+    const pages = Math.max(1, Math.ceil(items.length / OCR_PER_PAGE));
+    const current = Math.min(page, pages);
+    const visible = items.slice(
+        (current - 1) * OCR_PER_PAGE,
+        current * OCR_PER_PAGE,
+    );
+
+    return (
+        <div className="insight-block">
+            <p className="muted">
+                Распознано фрагментов: {items.length}.
+                Нажмите на время, чтобы перейти к кадру.
+            </p>
+
+            <ol className="transcript-list">
+                {visible.map((item, index) => (
+                    <li
+                        className="transcript-row"
+                        key={item.id || `${item.start}-${index}`}
+                    >
+                        <button
+                            className="insight-time"
+                            onClick={() => onSeek(Number(item.start) || 0)}
+                        >
+                            {formatTime(Number(item.start) || 0)}
+                        </button>
+
+                        {item.artifact ? (
+                            <button
+                                className="landmark-thumb ocr-thumb"
+                                onClick={() => onSeek(Number(item.start) || 0)}
+                                title="Перейти к кадру"
+                            >
+                                <img
+                                    src={fileUrl(job.id, item.artifact)}
+                                    alt={item.text}
+                                    loading="lazy"
+                                />
+                            </button>
+                        ) : null}
+
+                        <div className="transcript-text">
+                            {item.text}
+
+                            {Number.isFinite(Number(item.recognition_score)) && (
+                                <span className="muted">
+                                    {" "}· {Math.round(Number(item.recognition_score) * 100)}%
+                                </span>
+                            )}
+                        </div>
+                    </li>
+                ))}
+            </ol>
+
+            {pages > 1 && (
+                <div className="insight-pager">
+                    <button
+                        className="insight-page-button"
+                        disabled={current <= 1}
+                        onClick={() => setPage(current - 1)}
+                    >
+                        ←
+                    </button>
+
+                    <span className="muted">
+                        {current} / {pages}
+                    </span>
+
+                    <button
+                        className="insight-page-button"
+                        disabled={current >= pages}
+                        onClick={() => setPage(current + 1)}
+                    >
+                        →
+                    </button>
+                </div>
+            )}
+        </div>
+    );
+}
+
+
+export default function VisualAnalysisPanel({ job, onSeek }) {
+    const hasVisual = Boolean(job?.stages?.visual_analysis);
+    const hasScenes = Boolean(job?.stages?.scenes);
+    const hasOcr = Boolean(job?.stages?.ocr);
+
+    const defaultTab = hasVisual
+        ? "objects"
+        : hasScenes
+            ? "scenes"
+            : "ocr";
+
+    const [tab, setTab] = useState(defaultTab);
+
+    useEffect(() => {
+        setTab(defaultTab);
+    }, [job?.id, defaultTab]);
+
+    if (!hasVisual && !hasScenes && !hasOcr) {
         return null;
     }
 
+    const result = resultOf(job);
     const counts = result.counts || {};
+
+    const sceneCount = job?.stages?.scenes?.result?.scene_count ?? 0;
+    const textCount = job?.stages?.ocr?.observations?.length ?? 0;
+    const frameCount = counts.frames ?? result.successful_frames ?? 0;
+
+    const summary = [];
+    if (sceneCount > 0) summary.push(`${sceneCount} сцен`);
+    if (textCount > 0) summary.push(`${textCount} текстов`);
+    if (frameCount > 0) summary.push(`${frameCount} кадр.`);
 
     return (
         <section className="panel analysis-panel">
@@ -425,15 +616,17 @@ export default function VisualAnalysisPanel({ job, onSeek }) {
                 <div>
                     <h2>Визуальный анализ</h2>
                     <p className="muted">
-                        Один проход: метрики, семантическая разметка, YOLOv8n
-                        и анонимные лица. Это визуальные улики, а не
-                        подтверждённые координаты.
+                        Сцены, текст на кадрах, семантическая разметка,
+                        YOLOv8n и анонимные лица. Это визуальные улики,
+                        а не подтверждённые координаты.
                     </p>
                 </div>
 
-                <span className="insight-count">
-                    {counts.frames ?? result.successful_frames ?? 0} кадр.
-                </span>
+                {summary.length > 0 && (
+                    <span className="insight-count">
+                        {summary.join(" · ")}
+                    </span>
+                )}
             </div>
 
             <div className="analysis-tabs" role="tablist">
@@ -454,6 +647,14 @@ export default function VisualAnalysisPanel({ job, onSeek }) {
             <div className="analysis-tab-body">
                 {tab === "objects" && (
                     <ObjectsTab job={job} result={result} onSeek={onSeek} />
+                )}
+
+                {tab === "scenes" && (
+                    <ScenesTab job={job} onSeek={onSeek} />
+                )}
+
+                {tab === "ocr" && (
+                    <OcrTab job={job} onSeek={onSeek} />
                 )}
 
                 {tab === "detections" && (

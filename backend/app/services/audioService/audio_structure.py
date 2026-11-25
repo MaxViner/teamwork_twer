@@ -1,13 +1,15 @@
-"""Аудиопрофиль видео.
+"""Аудиопрофиль и семантические звуки.
 
-Аудио режется на окна по секунде; для каждого считаются громкость,
-тишина, частота переходов и спектр. Отмечаются тишина, громкие
-участки, низкочастотный гул и широкополосный шум — это подсказки
-об акустической обстановке места, а не распознавание звуков.
+Две независимые части:
+1. Профиль громкости (RMS/тишина/громкость/спектр) — «тихая
+   среда», «шумная среда», карта громких участков. Полезно для
+   контекста, но не для геолокации.
+2. Семантические звуки (YAMNet): поезд, сирена, церковный
+   колокол, вертолёт, стройка и т.д. Это реальные улики для
+   определения места.
 
-Файловые операции идут через StorageService: ffmpeg пишет
-runs/<run_id>/audio_structure.wav, а в observations путь
-сохраняется относительно folder (storage.relative).
+Наблюдения создаются только сводные — по одному на тип звука.
+Поштучные события сохраняются в result.sound_events для UI.
 """
 
 import math
@@ -17,17 +19,22 @@ from pathlib import Path
 import numpy as np
 
 from app.storage import StorageService
+from app.utils.commands import command
 from app.utils.errors import SkipStage
 from app.utils.observations import observation
-from app.utils.commands import command
+
+from app.services.audioService.sound_events import (
+    YamnetDetector,
+    model_available,
+    model_note,
+    summarize,
+)
 
 
 AUDIO_RATE = 16000
 WINDOW_SECONDS = 1.0
 SILENCE_RMS = 0.005
 LOUD_RMS = 0.08
-RUMBLE_CENTROID = 300.0
-BROADBAND_ZCR = 0.15
 
 
 def extract_audio_structure(
@@ -54,14 +61,58 @@ def extract_audio_structure(
         str(audio_path),
     ])
 
-    events = []
-    windows = []
+    # 1. Профиль громкости (быстро, ~секунда)
+    progress(20, "Считаю профиль громкости")
+    windows = _volume_windows(audio_path, prepared)
+    profile = _build_profile(windows)
 
+    # 2. Семантические звуки (YAMNet, если модель есть)
+    sound_events: list[dict] = []
+    sound_summary: list[dict] = []
+    sound_model_note: str | None = None
+
+    if model_available():
+        progress(50, "Распознаю звуковые события")
+
+        try:
+            waveform = _load_waveform(audio_path)
+            detector = YamnetDetector()
+            sound_events = detector.analyze(waveform)
+            sound_summary = summarize(sound_events)
+        except Exception as error:
+            sound_model_note = (
+                f"YAMNet недоступен: {str(error)[:200]}"
+            )
+    else:
+        sound_model_note = model_note()
+
+    progress(90, "Формирую наблюдения")
+    observations = _build_observations(sound_summary, profile)
+
+    progress(100, "Аудиальный анализ завершён")
+
+    return {
+        "sound_events": sound_events,
+        "sound_summary": sound_summary,
+        "profile": profile,
+        "observations": observations,
+        "model": "yamnet-onnx" if sound_events else None,
+        "window_seconds": WINDOW_SECONDS,
+        "note": sound_model_note or (
+            "Распознаются классы AudioSet, полезные как "
+            "географические улики: транспорт, сирены, колокола, "
+            "природа, стройка, люди. Это не полное распознавание "
+            "всех звуков."
+        ),
+    }
+
+
+# ─────────────────────── профиль громкости ───────────────────────
+
+def _volume_windows(audio_path: Path, prepared: dict) -> list[dict]:
+    windows = []
     window_size = int(AUDIO_RATE * WINDOW_SECONDS)
-    offset = max(
-        0.0,
-        float(prepared.get("audio_start", 0.0)),
-    )
+    offset = max(0.0, float(prepared.get("audio_start", 0.0)))
     duration = float(prepared["duration"])
 
     with wave.open(str(audio_path), "rb") as audio:
@@ -83,286 +134,47 @@ def extract_audio_structure(
                 break
 
             start = offset + index * WINDOW_SECONDS
-            end = min(
-                duration,
-                start + len(block) / AUDIO_RATE,
-            )
+            end = min(duration, start + len(block) / AUDIO_RATE)
 
             if start >= duration:
                 break
 
-            progress(
-                index / total * 100,
-                f"Анализ звука: окно {index + 1}/{total}",
-            )
-
-            metrics = _window_metrics(block)
-            order = len(windows)
-
             windows.append({
                 "start": start,
                 "end": end,
-                **metrics,
+                **_window_metrics(block),
             })
 
-            kind = _classify(metrics)
-
-            if kind is None:
-                continue
-
-            events.append({
-                "kind": kind,
-                "start": start,
-                "end": end,
-                "window_index": order,
-            })
-
-    observations = _build_observations(
-        storage=storage,
-        audio_path=audio_path,
-        events=events,
-    )
-
-    profile = _build_profile(windows)
-
-    progress(100, "Анализ звуковой структуры завершён")
-
-    return {
-        "windows": windows[:300],
-        "profile": profile,
-        "observations": observations,
-        "event_count": sum(
-            item["data"]["event_count"]
-            for item in observations
-        ),
-        "model": "ffmpeg+numpy-rms-spectrum",
-        "window_seconds": WINDOW_SECONDS,
-        "note": (
-            "Определяются тишина, громкость, низкочастотный гул "
-            "и широкополосный шум. Это не распознавание "
-            "конкретных звуков или места."
-        ),
-    }
+    return windows
 
 
 def _window_metrics(block: np.ndarray) -> dict:
-    rms = float(
-        np.sqrt(
-            np.mean(block.astype(np.float64) ** 2)
-        )
-    )
+    rms = float(np.sqrt(np.mean(block.astype(np.float64) ** 2)))
 
     signs = np.signbit(block)
-    zcr = float(
-        np.mean(signs[1:] != signs[:-1])
-    )
+    zcr = float(np.mean(signs[1:] != signs[:-1]))
 
-    spectrum = np.abs(
-        np.fft.rfft(block * np.hanning(len(block)))
-    )
-
-    frequencies = np.fft.rfftfreq(
-        len(block),
-        1.0 / AUDIO_RATE,
-    )
-
+    spectrum = np.abs(np.fft.rfft(block * np.hanning(len(block))))
+    frequencies = np.fft.rfftfreq(len(block), 1.0 / AUDIO_RATE)
     total = float(spectrum.sum())
 
     centroid = (
         float((frequencies * spectrum).sum() / total)
-        if total > 0
-        else 0.0
+        if total > 0 else 0.0
     )
 
-    return {
-        "rms": rms,
-        "zcr": zcr,
-        "centroid": centroid,
-    }
-
-
-def _classify(metrics: dict) -> str | None:
-    rms = metrics["rms"]
-
-    if rms < SILENCE_RMS:
-        return "silence"
-
-    if rms >= LOUD_RMS:
-        return "loud_audio"
-
-    if (
-        metrics["centroid"] < RUMBLE_CENTROID
-        and rms >= SILENCE_RMS * 2
-    ):
-        return "low_frequency_rumble"
-
-    if (
-        metrics["zcr"] > BROADBAND_ZCR
-        and rms >= SILENCE_RMS * 2
-    ):
-        return "broadband_noise"
-
-    return None
-
-
-def _build_observations(
-    storage: StorageService,
-    audio_path: Path,
-    events: list[dict],
-) -> list[dict]:
-    """Складывает одинаковые звуковые события в одну запись."""
-
-    observations = []
-
-    for group in _group_events(events):
-        intervals = group["intervals"]
-
-        observations.append(
-            observation(
-                source="audio_event",
-                start=intervals[0][0],
-                end=intervals[-1][1],
-                text=_event_summary(group),
-                artifact=storage.relative(audio_path),
-                extractor="numpy-rms-spectrum",
-                data={
-                    "kind": group["kind"],
-                    "event_count": len(intervals),
-                    "window_count": group["window_count"],
-                    "total_seconds": round(
-                        group["total_seconds"],
-                        2,
-                    ),
-                    "intervals": [
-                        [
-                            round(start, 2),
-                            round(end, 2),
-                        ]
-                        for start, end in intervals[:50]
-                    ],
-                    "intervals_truncated": (
-                        len(intervals) > 50
-                    ),
-                    "time_is_approximate": True,
-                },
-            )
-        )
-
-    return observations
-
-
-def _group_events(events: list[dict]) -> list[dict]:
-    """Группирует окна по типу звука и склеивает соседние."""
-
-    groups = {}
-
-    for item in events:
-        groups.setdefault(
-            item["kind"],
-            [],
-        ).append(item)
-
-    result = []
-
-    for kind, items in groups.items():
-        items.sort(
-            key=lambda item: item["start"],
-        )
-
-        intervals = _merge_intervals(items)
-
-        result.append({
-            "kind": kind,
-            "intervals": intervals,
-            "window_count": len(items),
-            "total_seconds": sum(
-                end - start
-                for start, end in intervals
-            ),
-        })
-
-    return sorted(
-        result,
-        key=lambda group: group["intervals"][0][0],
-    )
-
-
-def _merge_intervals(items: list[dict]) -> list[list[float]]:
-    """Склеивает соседние секундные окна в один участок."""
-
-    intervals = []
-
-    for item in items:
-        start = float(item["start"])
-        end = float(item["end"])
-
-        if (
-            intervals
-            and start <= intervals[-1][1] + 0.05
-        ):
-            intervals[-1][1] = max(
-                intervals[-1][1],
-                end,
-            )
-
-        else:
-            intervals.append([start, end])
-
-    return intervals
-
-
-def _event_summary(group: dict) -> str:
-    labels = {
-        "silence": "Тишина или очень тихий звук",
-        "loud_audio": "Заметно громкий звук",
-        "low_frequency_rumble": (
-            "Низкочастотный гул: возможно, ветер, "
-            "двигатель или техника"
-        ),
-        "broadband_noise": (
-            "Широкополосный шум: возможно, улица, "
-            "транспорт или техника"
-        ),
-    }
-
-    label = labels.get(
-        group["kind"],
-        "Звуковое событие",
-    )
-
-    return (
-        f"{label}. Участков: "
-        f"{len(group['intervals'])}, суммарно "
-        f"{_format_duration(group['total_seconds'])}."
-    )
-
-
-def _format_duration(seconds: float) -> str:
-    total = max(0, int(round(seconds)))
-    minutes, seconds = divmod(total, 60)
-
-    return f"{minutes}:{seconds:02d}"
+    return {"rms": rms, "zcr": zcr, "centroid": centroid}
 
 
 def _build_profile(windows: list[dict]) -> dict:
     if not windows:
         return {}
 
-    rms_values = [window["rms"] for window in windows]
-    centroid_values = [
-        window["centroid"]
-        for window in windows
-    ]
+    rms_values = [w["rms"] for w in windows]
+    centroid_values = [w["centroid"] for w in windows]
 
-    silence = sum(
-        1 for value in rms_values
-        if value < SILENCE_RMS
-    ) / len(windows)
-
-    loud = sum(
-        1 for value in rms_values
-        if value >= LOUD_RMS
-    ) / len(windows)
+    silence = sum(1 for v in rms_values if v < SILENCE_RMS) / len(windows)
+    loud = sum(1 for v in rms_values if v >= LOUD_RMS) / len(windows)
 
     if silence > 0.6:
         environment = "тихая среда"
@@ -372,10 +184,7 @@ def _build_profile(windows: list[dict]) -> dict:
         environment = "смешанный звуковой фон"
 
     return {
-        "mean_rms": round(
-            sum(rms_values) / len(rms_values),
-            5,
-        ),
+        "mean_rms": round(sum(rms_values) / len(rms_values), 5),
         "peak_rms": round(max(rms_values), 5),
         "silence_ratio": round(silence, 3),
         "loud_ratio": round(loud, 3),
@@ -386,3 +195,80 @@ def _build_profile(windows: list[dict]) -> dict:
         "environment": environment,
         "windows": len(windows),
     }
+
+
+# ─────────────────────── загрузка waveform ───────────────────────
+
+def _load_waveform(audio_path: Path) -> np.ndarray:
+    with wave.open(str(audio_path), "rb") as audio:
+        frames = audio.readframes(audio.getnframes())
+
+    return (
+        np.frombuffer(frames, dtype=np.int16)
+        .astype(np.float32) / 32768.0
+    )
+
+
+# ─────────────────────── наблюдения ───────────────────────
+
+def _build_observations(
+    sound_summary: list[dict],
+    profile: dict,
+) -> list[dict]:
+    """Одно сводное observation на тип звука + одно на профиль."""
+    observations: list[dict] = []
+
+    for item in sound_summary[:8]:
+        intervals = item.get("intervals") or []
+
+        start = intervals[0][0] if intervals else 0.0
+        end = intervals[-1][1] if intervals else 0.0
+
+        observations.append(
+            observation(
+                source="audio_event",
+                start=start,
+                end=end,
+                text=(
+                    f"Идентифицирован звук «{item['label_ru']}»: "
+                    f"{item['count']} участк., "
+                    f"суммарно {item['total_seconds']} с."
+                ),
+                extractor="yamnet-onnx",
+                data={
+                    "kind": "sound_summary",
+                    "sound_kind": item["kind"],
+                    "label_ru": item["label_ru"],
+                    "importance": item["importance"],
+                    "count": item["count"],
+                    "total_seconds": item["total_seconds"],
+                    "max_confidence": item["max_confidence"],
+                    "intervals": intervals[:10],
+                    "intervals_truncated": len(intervals) > 10,
+                    "time_is_approximate": True,
+                },
+            )
+        )
+
+    if profile:
+        observations.append(
+            observation(
+                source="audio_profile",
+                start=0.0,
+                end=0.0,
+                text=(
+                    f"Акустическая обстановка: "
+                    f"{profile.get('environment')}; "
+                    f"тишина {profile.get('silence_ratio', 0) * 100:.0f}%."
+                ),
+                extractor="numpy-rms-spectrum",
+                data={
+                    "kind": "audio_profile_summary",
+                    "environment": profile.get("environment"),
+                    "silence_ratio": profile.get("silence_ratio"),
+                    "loud_ratio": profile.get("loud_ratio"),
+                },
+            )
+        )
+
+    return observations

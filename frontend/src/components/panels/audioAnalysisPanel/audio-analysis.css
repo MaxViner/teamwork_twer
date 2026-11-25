@@ -1,0 +1,249 @@
+/* ═══════════════════════════════════════════════════════════════════
+   ПАНЕЛЬ АУДИАЛЬНОГО АНАЛИЗА
+   ═══════════════════════════════════════════════════════════════════ */
+
+.audio-panel {
+    margin-top: 14px;
+}
+
+.audio-panel__intro {
+    margin-bottom: 14px;
+}
+
+.audio-panel__section-title {
+    margin: 20px 0 10px;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+}
+
+/* ─────────── список звуков ─────────── */
+
+.sound-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.sound-card {
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: var(--paper);
+    overflow: hidden;
+    transition: border-color 150ms ease;
+}
+
+.sound-card:hover {
+    border-color: var(--line-strong);
+}
+
+.sound-card__header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+    padding: 12px 14px;
+    background: transparent;
+    border: 0;
+    cursor: pointer;
+    font: inherit;
+    color: inherit;
+    text-align: left;
+}
+
+.sound-card__header:focus-visible {
+    outline: 2px solid var(--accent-border, #b78962);
+    outline-offset: -2px;
+}
+
+.sound-card__icon {
+    font-size: 22px;
+    line-height: 1;
+    flex-shrink: 0;
+}
+
+.sound-card__title {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    min-width: 0;
+}
+
+.sound-card__label-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.sound-card__label-row strong {
+    font-size: 14px;
+    color: #463a31;
+    font-weight: 600;
+}
+
+.sound-card__badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 1px 7px;
+    border-radius: 999px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+}
+
+.sound-card__badge--is-high {
+    background: rgba(76, 175, 80, 0.14);
+    color: #2f7b48;
+}
+
+.sound-card__meta {
+    font-size: 12px;
+    color: var(--muted);
+    line-height: 1.4;
+}
+
+.sound-card__conf {
+    color: #4d8a5c;
+}
+
+.sound-card__toggle {
+    color: var(--muted);
+    font-size: 12px;
+    flex-shrink: 0;
+    width: 14px;
+    text-align: center;
+    transition: color 150ms ease;
+}
+
+.sound-card__header:hover .sound-card__toggle {
+    color: var(--accent);
+}
+
+.sound-card__intervals {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 10px 14px 12px;
+    border-top: 1px solid var(--line);
+    background: rgba(0, 0, 0, 0.015);
+}
+
+.sound-card__time {
+    padding: 3px 9px;
+    font-size: 11px;
+    font-weight: 500;
+    font-variant-numeric: tabular-nums;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text-secondary, #555);
+    cursor: pointer;
+    transition:
+        border-color 150ms ease,
+        color 150ms ease,
+        background-color 150ms ease;
+}
+
+.sound-card__time:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+    background: rgba(149, 101, 71, 0.04);
+}
+
+/* ─────────── профиль громкости ─────────── */
+
+.audio-profile {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 14px 16px;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: var(--paper);
+}
+
+.audio-profile__row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 16px;
+    font-size: 13px;
+}
+
+.audio-profile__row span {
+    color: var(--muted);
+}
+
+.audio-profile__row strong {
+    color: #463a31;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+}
+
+/* ─────────── мобильный ─────────── */
+
+@media (max-width: 640px) {
+    .sound-card__header {
+        padding: 10px 12px;
+    }
+
+    .audio-profile {
+        padding: 12px;
+    }
+
+    .audio-profile__row {
+        font-size: 12px;
+    }
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   ЕДИНЫЙ БЛОК «АУДИАЛЬНЫЙ АНАЛИЗ»
+   ═══════════════════════════════════════════════════════════════════ */
+
+.audio-section .audio-section__block {
+    padding: 0;
+}
+
+.audio-section__heading {
+    margin: 0 0 12px;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+}
+
+.audio-section__divider {
+    height: 1px;
+    margin: 22px 0;
+    background: var(--line);
+}
+
+/* Убираем лишние верхние отступы у вложенных панелей */
+.audio-section .transcript-embedded,
+.audio-section .audio-embedded {
+    padding: 0;
+}
+
+/* Счётчик звуков в embedded-режиме — компактная строка над списком */
+.audio-embedded__count {
+    margin: -6px 0 12px;
+    font-size: 12px;
+    color: var(--muted);
+}
+
+/* Вложенные заголовки внутри «Звуковых событий» — h4 */
+.audio-panel__section-title {
+    margin: 18px 0 10px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+}

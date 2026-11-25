@@ -91,3 +91,17 @@
     width: 100%;
     height: auto;
 }
+
+/* -- OCR: миниатюра вырезанного текста в строке распознавания -- */
+
+.analysis-panel .ocr-thumb {
+    width: 88px;
+    height: 40px;
+    border: 1px solid var(--line);
+    background: var(--paper);
+}
+
+.analysis-panel .ocr-thumb img {
+    object-fit: contain;
+    background: #fff;
+}
