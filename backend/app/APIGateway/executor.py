@@ -8,10 +8,10 @@ executor запускает анализатор, сохраняет резул�
 from concurrent.futures import ThreadPoolExecutor
 from threading import RLock
 from uuid import uuid4
+
 import psutil
 from fastapi import HTTPException
 
-from app.utils.errors import PauseRequested, SkipStage
 from app.APIGateway.jobs import (
     DATA,
     LAST_PROGRESS_UPDATE,
@@ -25,7 +25,7 @@ from app.APIGateway.jobs import (
     stage_enabled,
 )
 from app.APIGateway.pipeline import STAGES, run_stage
-
+from app.utils.errors import PauseRequested, SkipStage
 
 POOL = ThreadPoolExecutor(
     max_workers=1,

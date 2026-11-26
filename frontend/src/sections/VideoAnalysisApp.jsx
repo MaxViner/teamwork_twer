@@ -36,6 +36,9 @@ export default function VideoAnalysisApp() {
                 job={state.job}
                 onSelect={state.setSelectedId}
                 onRefresh={state.actions.handleRefreshJobs}
+                onDelete={state.actions.handleDeleteJob}
+                onPause={state.actions.handlePauseJob}
+                onResume={state.actions.handleResumeJob}
             />
 
             {state.job && (

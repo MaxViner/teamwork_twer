@@ -25,7 +25,10 @@ from app.APIGateway.endpoints import (
     health_router,
     job_router,
     observation_router,
+    odometry_lab_router,
     report_router,
+    dev_services_router,
+    video_lab_router,
 )
 from app.APIGateway.test_endpoints import (
     geo_clue_router,
@@ -127,3 +130,6 @@ appServer.include_router(geo_research_router)
 # могут проверить поведение.
 appServer.include_router(test_router)
 appServer.include_router(geo_clue_router)
+appServer.include_router(video_lab_router)
+appServer.include_router(odometry_lab_router)
+appServer.include_router(dev_services_router)

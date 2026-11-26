@@ -299,8 +299,8 @@ function OdometryTab({ result }) {
                         <dt>Длина пути</dt>
                         <dd>
                             {trajectory.path_length ?? 0} усл.
-                            {trajectory.path_length_m != null
-                                ? ` · ≈ ${trajectory.path_length_m} м`
+                            {trajectory.path_length_approx_m != null
+                                ? ` · ≈ ${trajectory.path_length_approx_m} м`
                                 : ""}
                         </dd>
                     </div>
@@ -308,8 +308,8 @@ function OdometryTab({ result }) {
                         <dt>Смещение</dt>
                         <dd>
                             {trajectory.displacement ?? 0} усл.
-                            {trajectory.displacement_m != null
-                                ? ` · ≈ ${trajectory.displacement_m} м`
+                            {trajectory.displacement_approx_m != null
+                                ? ` · ≈ ${trajectory.displacement_approx_m} м`
                                 : ""}
                         </dd>
                     </div>
@@ -332,6 +332,51 @@ function OdometryTab({ result }) {
                     </div>
                 </dl>
             </div>
+
+            {odometry.diagnostics && (
+                <div className="insight-block">
+                    <h3>Качество пар</h3>
+
+                    <dl className="profile-grid">
+                        <div>
+                            <dt>Средняя доля инлайеров</dt>
+                            <dd>
+                                {odometry.diagnostics.mean_quality ?? "—"}
+                            </dd>
+                        </div>
+                        <div>
+                            <dt>Средние инлайеры</dt>
+                            <dd>
+                                {odometry.diagnostics.mean_inliers ?? "—"}
+                            </dd>
+                        </div>
+                        <div>
+                            <dt>Средние совпадения</dt>
+                            <dd>
+                                {odometry.diagnostics.mean_matches ?? "—"}
+                            </dd>
+                        </div>
+                        <div>
+                            <dt>Причины отказов</dt>
+                            <dd>
+                                {Object.entries(
+                                    odometry.diagnostics.skipped_reasons
+                                    || {},
+                                ).length
+                                    ? Object.entries(
+                                        odometry.diagnostics
+                                            .skipped_reasons,
+                                    )
+                                        .map(([key, value]) => (
+                                            `${key}: ${value}`
+                                        ))
+                                        .join(", ")
+                                    : "—"}
+                            </dd>
+                        </div>
+                    </dl>
+                </div>
+            )}
 
             {points.length > 1 && (
                 <div className="insight-block">
@@ -399,6 +444,13 @@ function BevTab({ job, result }) {
                     : ""}
             </p>
 
+            <p className="muted">
+                На карте только маршрут и сильные якоря (дома,
+                фундаменты, мосты, промышленные и природные
+                ориентиры). Слабые улики отброшены, чтобы карта
+                оставалась читаемой.
+            </p>
+
             {bev.overlay_png && (
                 <button
                     type="button"
@@ -431,8 +483,12 @@ function BevTab({ job, result }) {
                     <dd>{stats.total_turn_deg ?? 0}°</dd>
                 </div>
                 <div>
-                    <dt>Объектов</dt>
-                    <dd>{bev.objects?.length ?? 0}</dd>
+                    <dt>Ключевых якорей</dt>
+                    <dd>{bev.anchor_count ?? bev.anchors?.length ?? 0}</dd>
+                </div>
+                <div>
+                    <dt>Отброшено улик</dt>
+                    <dd>{bev.ignored_clue_count ?? 0}</dd>
                 </div>
                 <div>
                     <dt>Источник масштаба</dt>

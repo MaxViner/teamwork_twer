@@ -57,6 +57,10 @@ def extract_odometry(
                 "total_turn_deg": 0.0,
                 "net_turn_deg": 0.0,
                 "units": "relative",
+                "metric_estimate": False,
+                "metric_approximate": True,
+                "path_length_approx_m": 0.0,
+                "displacement_approx_m": 0.0,
             },
             "pairs": [],
             "scale": estimate_scale(_device(stages), road_summary),
@@ -64,6 +68,15 @@ def extract_odometry(
             "pair_count": 0,
             "successful_pairs": 0,
             "skipped_pairs": 0,
+            "diagnostics": {
+                "successful_pairs": 0,
+                "skipped_pairs": 0,
+                "skipped_reasons": {},
+                "mean_quality": None,
+                "mean_inliers": None,
+                "mean_matches": None,
+                "mean_features": None,
+            },
             "observations": [],
             "note": (
                 "Для одометрии нужно минимум два кадра; "
@@ -103,6 +116,7 @@ def extract_odometry(
                 "from_timestamp": first["timestamp"],
                 "to_timestamp": second["timestamp"],
                 "reason": reason or "degenerate",
+                "diagnostics": dict(odometry.diagnostics),
             })
             continue
 
@@ -113,11 +127,17 @@ def extract_odometry(
             "to_timestamp": second["timestamp"],
             "R": result["R"],
             "t": result["t"],
+            "step_length": result.get("step_length", 1.0),
             "inliers": result["inliers"],
             "quality": result["quality"],
             "blur_a": result["blur_a"],
             "blur_b": result["blur_b"],
+            "features_a": result.get("features_a"),
+            "features_b": result.get("features_b"),
+            "matches": result.get("matches"),
+            "units": "relative",
             "timings": dict(odometry.timings),
+            "diagnostics": dict(odometry.diagnostics),
         }
 
         pairs.append(pose)
@@ -127,6 +147,8 @@ def extract_odometry(
 
     progress(100, "Одометрия завершена")
 
+    diagnostics = _pair_diagnostics(pairs, skipped)
+
     return {
         "trajectory": trajectory,
         "pairs": pairs,
@@ -135,6 +157,7 @@ def extract_odometry(
         "pair_count": len(pairs) + len(skipped),
         "successful_pairs": len(pairs),
         "skipped_pairs": len(skipped),
+        "diagnostics": diagnostics,
         "observations": _build_observations(
             trajectory,
             pairs,
@@ -143,8 +166,9 @@ def extract_odometry(
         ),
         "note": (
             "Относительная траектория камеры без loop closure и "
-            "точной метрики. t нормирован; scale — грубая оценка "
-            "по устройству или ширине полосы."
+            "точной метрики. Длина шага из recoverPose нормирована: "
+            "path_length_m — грубая оценка по масштабу устройства, "
+            "а не измерение. Для BEV важна топология, не метры."
         ),
     }
 
@@ -302,21 +326,68 @@ def _trajectory(
     built["timestamps"] = timestamps[: len(built["points"])]
     built["pair_count"] = len(pairs)
     built["scale_source"] = scale.get("source")
-    built["metric_estimate"] = True
+    built["units"] = "relative"
+    built["metric_estimate"] = False
+    built["metric_approximate"] = True
+    built["metric_note"] = (
+        "recoverPose возвращает единичный вектор переноса. "
+        "Длина шага в trajectory — условная; path_length_m и "
+        "displacement_m получены умножением на грубый масштаб."
+    )
 
     # Грубая оценка метров: масштаб из scale.py, а не измерение.
+    # Поля сохранены для старых job.json и UI, но помечены как
+    # приблизительные; BEV их не использует.
     m_per_unit = float(scale.get("m_per_unit") or 1.0)
 
-    built["path_length_m"] = round(
+    built["path_length_steps"] = len(built.get("points") or [])
+    built["path_length_approx_m"] = round(
         float(built.get("path_length") or 0.0) * m_per_unit,
         2,
     )
-    built["displacement_m"] = round(
+    built["displacement_approx_m"] = round(
         float(built.get("displacement") or 0.0) * m_per_unit,
         2,
     )
+    built["path_length_m"] = built["path_length_approx_m"]
+    built["displacement_m"] = built["displacement_approx_m"]
 
     return built
+
+
+def _pair_diagnostics(
+    pairs: list[dict],
+    skipped: list[dict],
+) -> dict:
+    """Сводка качества: признаки, совпадения, инлайеры, причины."""
+
+    reasons: dict[str, int] = {}
+
+    for item in skipped:
+        reason = str(item.get("reason") or "unknown")
+        reasons[reason] = reasons.get(reason, 0) + 1
+
+    def mean(field: str) -> float | None:
+        values = [
+            float(pair[field])
+            for pair in pairs
+            if pair.get(field) is not None
+        ]
+
+        if not values:
+            return None
+
+        return round(sum(values) / len(values), 2)
+
+    return {
+        "successful_pairs": len(pairs),
+        "skipped_pairs": len(skipped),
+        "skipped_reasons": reasons,
+        "mean_quality": mean("quality"),
+        "mean_inliers": mean("inliers"),
+        "mean_matches": mean("matches"),
+        "mean_features": mean("features_a"),
+    }
 
 
 def _device(stages: dict) -> str | None:
@@ -347,8 +418,9 @@ def _build_observations(
         f"Одометрия: успешных пар {len(pairs)}, "
         f"пропущено {len(skipped)}; "
         f"средняя доля инлайеров {quality:.2f}. "
-        f"Длина пути ≈ {trajectory.get('path_length_m')} м, "
-        f"смещение ≈ {trajectory.get('displacement_m')} м, "
+        f"Длина пути ≈ {trajectory.get('path_length_approx_m')} м, "
+        f"смещение ≈ {trajectory.get('displacement_approx_m')} м "
+        f"(грубая оценка, не измерение), "
         f"суммарный поворот "
         f"{trajectory.get('total_turn_deg')}°. "
         f"Масштаб: {scale.get('source')} "
@@ -371,8 +443,16 @@ def _build_observations(
                 "trajectory_points": len(trajectory.get("points") or []),
                 "path_length": trajectory.get("path_length"),
                 "displacement": trajectory.get("displacement"),
+                "path_length_approx_m": trajectory.get(
+                    "path_length_approx_m"
+                ),
+                "displacement_approx_m": trajectory.get(
+                    "displacement_approx_m"
+                ),
                 "path_length_m": trajectory.get("path_length_m"),
                 "displacement_m": trajectory.get("displacement_m"),
+                "metric_approximate": True,
+                "units": "relative",
                 "total_turn_deg": trajectory.get("total_turn_deg"),
                 "net_turn_deg": trajectory.get("net_turn_deg"),
                 "requires_review": True,

@@ -10,8 +10,6 @@ storage принимается для единообразия сигнатур 
 """
 
 from app.storage import StorageService
-from app.utils.errors import SkipStage
-from app.utils.observations import observation
 from app.text import (
     best_sentences,
     keyword_set,
@@ -19,7 +17,8 @@ from app.text import (
     normalize,
     sentences,
 )
-
+from app.utils.errors import SkipStage
+from app.utils.observations import observation
 
 CONCLUSION_MARKERS = (
     "в общем",

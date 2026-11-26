@@ -1,10 +1,12 @@
 """BEV-проекция для стадии place_profile.
 
 Тонкая обёртка над bevService: собирает входные данные из
-траектории и детекций visual_analysis, строит топологическую
-карту и рендерит PNG в runs/<run_id>/bev_overlay.png.
+траектории и гео-улик visual_analysis, строит карту «маршрут +
+ключевые якоря» и рендерит PNG в runs/<run_id>/bev_overlay.png.
 
-Если данных меньше трёх пар, BEV не строится: bev = null.
+На карту попадают только сильные якоря (дома, фундаменты, мосты,
+промышленные объекты, природные ориентиры). Слабые улики вроде
+столбов и кустов отбрасываются: иначе карта превращается в кашу.
 """
 
 from __future__ import annotations
@@ -40,6 +42,8 @@ def build_bev_artifact(
             "timestamp": frame.get("timestamp"),
             "artifact": frame.get("artifact"),
             "size": frame.get("size"),
+            "geo_clues": frame.get("geo_clues") or [],
+            "frame_summary": frame.get("frame_summary"),
             "detections": frame.get("detections") or [],
         }
         for frame in visual_result.get("frames") or []

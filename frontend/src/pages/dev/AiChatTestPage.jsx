@@ -1,4 +1,4 @@
-import AiChatTestPanel from "../components/dev/AiChatTestPanel.jsx";
+import AiChatTestPanel from "../../components/dev/AiChatTestPanel.jsx";
 
 
 export default function AiChatTestPage() {

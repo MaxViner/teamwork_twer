@@ -1,27 +1,57 @@
-"""Топологическая BEV-проекция (v1).
+"""Топологическая BEV-проекция (v2): маршрут и ключевые якоря.
 
-Строит карту сверху по относительной траектории и детекциям. Это не
-метрическая реконструкция: масштаб условный, гомография не
-восстанавливает точные мировые координаты. Задача v1 — показать
-порядок движения и примерное расположение объектов относительно
-маршрута.
+Версия v1 рисовала все детекции всех кадров: на длинном видео это
+давало «кашу» из точек, по которой нельзя было понять место. Версия
+v2 оставляет на карте только то, что действительно помогает
+геопривязке:
 
-Вход:
-- trajectory: {"points": [[x, y, z], ...], ...};
-- detections_per_frame: список кадров с detections (bbox в пикселях);
-- road_segments: эпизоды дороги (start/end);
-- camera_height_m, cell_size_m — номинальные параметры сетки.
+- маршрут камеры (тонкий коридор дороги);
+- небольшое число сильных якорей — домов, фундаментов, мостов,
+  промышленных труб и природных ориентиров.
 
-Выход: grid, trajectory (2D), objects, road_mask, scale_source, note.
+Слабые улики (столбы, знаки, кусты) на карту не попадают: они
+перегружают её и не помогают сузить район. Каждый якорь
+привязывается к ближайшей точке маршрута по времени кадра, а его
+боковое смещение и «глубина» оцениваются по положению рамки в кадре.
+Это по-прежнему топология, а не метрика: масштаб условный.
 """
 
 from __future__ import annotations
+
+import math
 
 import numpy as np
 
 GRID_SIZE = 100
 DEFAULT_CELL_M = 0.5
 MARGIN_CELLS = 6
+
+# Максимум якорей на карте. Больше — снова каша.
+MAX_ANCHORS = 12
+
+# Боковое смещение якоря от маршрута в ячейках.
+LATERAL_CELLS = 7.0
+
+# Якоря одного типа ближе этого расстояния считаются одним объектом.
+MERGE_CELLS = 7.0
+
+# Сильные типы улик. Приоритет high важнее типа, но этот набор
+# используется, когда у старой детекции нет match_priority.
+STRONG_TYPES = {
+    "building_ruin",
+    "natural_landmark",
+    "industrial",
+    "bridge",
+}
+
+TYPE_COLORS = {
+    "building_ruin": (60, 90, 210),
+    "natural_landmark": (50, 150, 60),
+    "industrial": (180, 90, 40),
+    "bridge": (160, 60, 160),
+    "water": (200, 150, 40),
+    "other": (90, 90, 90),
+}
 
 
 def build_bev(
@@ -30,12 +60,13 @@ def build_bev(
     road_segments: list[dict],
     camera_height_m: float = 1.2,
     cell_size_m: float = 0.5,
+    max_anchors: int = MAX_ANCHORS,
 ) -> dict | None:
-    """Построить топологическую BEV-сетку.
+    """Построить карту «маршрут + ключевые якоря».
 
-    Возвращает None, если в траектории меньше трёх точек. Иначе —
-    словарь с сеткой, 2D-траекторией, объектами, маской дороги и
-    пометкой «без метрики».
+    Возвращает None, если в траектории меньше трёх точек или все
+    точки совпали. Иначе — сетку, 2D-маршрут, якоря, тонкий коридор
+    дороги и пометку «без метрики».
     """
 
     points = trajectory.get("points") or []
@@ -54,26 +85,32 @@ def build_bev(
     normalized, units_per_cell = _normalize(projected, rows, cols)
 
     if units_per_cell is None:
-        # Точки совпали: движения нет, карту строить не из чего.
         return None
 
-    objects = _objects(
+    timestamps = trajectory.get("timestamps") or []
+    frame_indices = trajectory.get("frame_indices") or []
+
+    anchors, ignored = _anchors(
         normalized,
         detections_per_frame,
-        trajectory.get("timestamps") or [],
+        timestamps,
+        frame_indices,
         rows,
         cols,
+        max_anchors=max_anchors,
     )
 
     road_mask = _road_mask(
         normalized,
         road_segments,
-        trajectory.get("timestamps") or [],
+        timestamps,
         rows,
         cols,
     )
 
     return {
+        "schema_version": 2,
+        "mode": "anchors",
         "grid": {
             "cell_size_m": float(cell_size_m or DEFAULT_CELL_M),
             "rows": rows,
@@ -90,11 +127,30 @@ def build_bev(
             "headings_deg": trajectory.get("headings_deg") or [],
             "units": "relative",
         },
-        "objects": objects,
+        "anchors": anchors,
+        "anchor_count": len(anchors),
+        "ignored_clue_count": ignored,
+        # Совместимость со старым фронтендом: objects теперь — якоря,
+        # а не все детекции.
+        "objects": [
+            {
+                "label": item["label"],
+                "label_ru": item.get("label_ru"),
+                "cells": [item["cell"]],
+                "frame_count": item.get("frame_count", 1),
+                "confidence": item.get("confidence"),
+                "match_priority": item.get("match_priority"),
+                "type": item.get("type"),
+            }
+            for item in anchors
+        ],
         "road_mask": road_mask,
         "scale_source": "relative_units",
         "camera_height_m": float(camera_height_m),
-        "note": "Топологическая карта, без метрики",
+        "note": (
+            "Топологическая карта: маршрут и только сильные якоря. "
+            "Масштаб условный, координаты не метрические."
+        ),
     }
 
 
@@ -128,10 +184,8 @@ def _normalize(
 ) -> tuple[list[list[int]], float | None]:
     """Вписать точки в сетку с сохранением пропорций.
 
-    Раньше оси масштабировались независимо, поэтому любой маршрут
-    растягивался на всю сетку и терял форму. Теперь используется
-    единый масштаб и центрирование: короткий путь занимает малую
-    часть карты, поворот виден как поворот.
+    Оси масштабируются одинаково, поэтому короткий маршрут занимает
+    малую часть карты, а поворот остаётся поворотом.
 
     Возвращает (точки, единиц_на_ячейку). Второе значение — None,
     если все точки совпали.
@@ -208,93 +262,303 @@ def _nearest_index(
     )
 
 
-def _objects(
+def _clues_of(frame: dict) -> list[dict]:
+    """Достать улики кадра в новом или старом формате."""
+
+    clues = frame.get("geo_clues")
+
+    if isinstance(clues, list) and clues:
+        return clues
+
+    legacy = frame.get("detections")
+
+    if not isinstance(legacy, list):
+        return []
+
+    return [
+        item
+        for item in legacy
+        if item.get("match_priority") or item.get("type")
+    ]
+
+
+def _is_strong(clue: dict) -> bool:
+    """Оставить только сильные якоря."""
+
+    priority = str(clue.get("match_priority") or "").lower()
+
+    if priority == "high":
+        return True
+
+    if priority in {"medium", "low"}:
+        return False
+
+    return str(clue.get("type") or "") in STRONG_TYPES
+
+
+def _anchors(
     trajectory: list[list[int]],
     detections_per_frame: list[dict],
     timestamps: list,
+    frame_indices: list,
     rows: int,
     cols: int,
-) -> list[dict]:
-    """Разместить детекции рядом с точкой маршрута своего кадра."""
+    max_anchors: int,
+) -> tuple[list[dict], int]:
+    """Собрать компактный набор сильных якорей.
+
+    Возвращает (якоря, число отброшенных улик). Якоря одного типа
+    сливаются, если оказались рядом: дом, видимый в десяти кадрах,
+    должен остаться одним домом, а не десятью точками.
+    """
 
     if not detections_per_frame or not trajectory:
-        return []
+        return [], 0
 
     total_frames = max(len(detections_per_frame), 1)
-    collected: dict[str, dict] = {}
+    collected: dict[str, list[dict]] = {}
+    ignored = 0
 
     for index, frame in enumerate(detections_per_frame):
-        size = frame.get("size") or []
-        detections = frame.get("detections") or []
+        clues = _clues_of(frame)
 
-        if not detections:
+        if not clues:
             continue
 
-        position = trajectory[
-            _nearest_index(
-                timestamps,
-                frame.get("timestamp"),
-                index,
-                total_frames,
-                len(trajectory),
-            )
-        ]
+        position_index = _nearest_index(
+            timestamps,
+            frame.get("timestamp"),
+            index,
+            total_frames,
+            len(trajectory),
+        )
+        position = trajectory[position_index]
+        tangent = _tangent(trajectory, position_index)
 
-        for detection in detections:
-            bbox = detection.get("bbox")
+        size = frame.get("size") or []
 
-            if not bbox or len(bbox) != 4:
+        for clue in clues:
+            if not _is_strong(clue):
+                ignored += 1
                 continue
 
-            x1, y1, x2, y2 = (float(value) for value in bbox)
+            bbox = clue.get("bbox")
 
-            if len(size) == 2 and size[1]:
-                # Только объекты у нижней трети кадра похожи на
-                # стоящие на земле; остальные пропускаем.
-                if y2 < float(size[1]) * 0.66:
-                    continue
+            if not bbox or len(bbox) != 4:
+                ignored += 1
+                continue
 
-                center_x = (x1 + x2) / 2 / max(float(size[0]), 1)
-            else:
-                center_x = 0.5
+            if not _valid_bbox(bbox):
+                ignored += 1
+                continue
 
-            label = str(detection.get("label") or "object")
-
-            entry = collected.setdefault(label, {
-                "label": label,
-                "cells": [],
-                "source_frame": index,
-            })
-
-            cell = _object_cell(
+            anchor = _anchor_cell(
                 position,
-                center_x,
+                tangent,
+                bbox,
+                size,
                 rows,
                 cols,
             )
 
-            if cell not in entry["cells"]:
-                entry["cells"].append(cell)
+            label = str(clue.get("label") or "clue")
+            entry = {
+                "label": label,
+                "label_ru": clue.get("label_ru") or label,
+                "type": clue.get("type") or "other",
+                "match_priority": clue.get("match_priority") or "high",
+                "confidence": float(clue.get("confidence") or 0.0),
+                "visibility_fraction": clue.get(
+                    "visibility_fraction"
+                ),
+                "shape_complexity": clue.get("shape_complexity"),
+                "timestamp": frame.get("timestamp"),
+                "artifact": frame.get("artifact"),
+                "frame_index": _frame_number(frame_indices, position_index),
+                "cell": anchor["cell"],
+                "radius_cells": anchor["radius"],
+                "bbox": [round(float(value), 1) for value in bbox],
+                "frame_count": 1,
+                "timestamps": [frame.get("timestamp")],
+            }
 
-    return list(collected.values())
+            merged = False
+
+            for existing in collected.setdefault(label, []):
+                if _cell_distance(
+                    existing["cell"],
+                    entry["cell"],
+                ) <= MERGE_CELLS:
+                    _merge_anchor(existing, entry)
+                    merged = True
+                    break
+
+            if not merged:
+                collected[label].append(entry)
+
+    anchors = [
+        item
+        for items in collected.values()
+        for item in items
+    ]
+
+    anchors.sort(key=lambda item: (
+        _priority_rank(item.get("match_priority")),
+        -float(item.get("confidence") or 0.0),
+        -int(item.get("frame_count") or 1),
+    ))
+
+    return anchors[:max(1, int(max_anchors))], ignored
 
 
-def _object_cell(
+def _valid_bbox(bbox) -> bool:
+    try:
+        x1, y1, x2, y2 = (float(value) for value in bbox)
+    except (TypeError, ValueError):
+        return False
+
+    return x2 > x1 and y2 > y1
+
+
+def _tangent(
+    trajectory: list[list[int]],
+    index: int,
+) -> tuple[float, float]:
+    """Направление маршрута в точке, в координатах сетки."""
+
+    if len(trajectory) < 2:
+        return 0.0, -1.0
+
+    first = trajectory[max(0, index - 1)]
+    second = trajectory[min(len(trajectory) - 1, index + 1)]
+
+    dx = float(second[0] - first[0])
+    dy = float(second[1] - first[1])
+    length = math.hypot(dx, dy)
+
+    if length <= 1e-9:
+        return 0.0, -1.0
+
+    return dx / length, dy / length
+
+
+def _anchor_cell(
     position: list[int],
-    center_x: float,
+    tangent: tuple[float, float],
+    bbox,
+    size,
     rows: int,
     cols: int,
-) -> list[int]:
-    """Сместить объект вбок от траектории по его X в кадре."""
+) -> dict:
+    """Разместить якорь рядом с маршрутом по его рамке в кадре."""
 
-    offset = int(round((center_x - 0.5) * 10))
-    col = position[0] + offset
-    row = position[1] + 1
+    x1, y1, x2, y2 = (float(value) for value in bbox)
 
-    return [
-        max(0, min(cols - 1, col)),
-        max(0, min(rows - 1, row)),
-    ]
+    width = float(size[0]) if len(size) == 2 and size[0] else 0.0
+    height = float(size[1]) if len(size) == 2 and size[1] else 0.0
+
+    if width > 0 and height > 0:
+        center_x = (x1 + x2) / 2.0 / width
+        bottom = y2 / height
+        area_ratio = (
+            max(0.0, x2 - x1) * max(0.0, y2 - y1)
+            / (width * height)
+        )
+    else:
+        center_x = 0.5
+        bottom = 1.0
+        area_ratio = 0.02
+
+    # Боковое смещение: объект слева/справа от оптической оси.
+    lateral = max(-1.0, min(1.0, (center_x - 0.5) * 2.0))
+    lateral *= LATERAL_CELLS
+
+    # Чем выше объект в кадре, тем он дальше: сдвигаем вперёд
+    # по направлению маршрута.
+    forward = max(0.5, min(4.5, (1.0 - bottom) * 7.0))
+
+    # Нормаль к маршруту.
+    normal_x = -tangent[1]
+    normal_y = tangent[0]
+
+    col = (
+        position[0]
+        + normal_x * lateral
+        + tangent[0] * forward
+    )
+    row = (
+        position[1]
+        + normal_y * lateral
+        + tangent[1] * forward
+    )
+
+    radius = max(
+        1.5,
+        min(5.0, math.sqrt(max(area_ratio, 0.0001)) * 45.0),
+    )
+
+    return {
+        "cell": [
+            max(0, min(cols - 1, int(round(col)))),
+            max(0, min(rows - 1, int(round(row)))),
+        ],
+        "radius": round(radius, 2),
+    }
+
+
+def _merge_anchor(existing: dict, incoming: dict) -> None:
+    """Слить два наблюдения одного и того же якоря."""
+
+    existing["frame_count"] = int(
+        existing.get("frame_count") or 1
+    ) + 1
+    existing.setdefault("timestamps", []).extend(
+        incoming.get("timestamps") or []
+    )
+
+    if float(incoming.get("confidence") or 0.0) > float(
+        existing.get("confidence") or 0.0
+    ):
+        existing["confidence"] = incoming["confidence"]
+        existing["bbox"] = incoming["bbox"]
+        existing["timestamp"] = incoming.get("timestamp")
+        existing["artifact"] = incoming.get("artifact")
+        existing["frame_index"] = incoming.get("frame_index")
+        existing["cell"] = incoming["cell"]
+
+    existing_visibility = existing.get("visibility_fraction")
+    incoming_visibility = incoming.get("visibility_fraction")
+
+    if incoming_visibility is not None and (
+        existing_visibility is None
+        or float(incoming_visibility) > float(existing_visibility)
+    ):
+        existing["visibility_fraction"] = incoming_visibility
+
+
+def _cell_distance(first: list[int], second: list[int]) -> float:
+    return math.hypot(
+        float(first[0]) - float(second[0]),
+        float(first[1]) - float(second[1]),
+    )
+
+
+def _priority_rank(value) -> int:
+    return {
+        "high": 0,
+        "medium": 1,
+        "low": 2,
+    }.get(str(value or "").lower(), 3)
+
+
+def _frame_number(frame_indices: list, position_index: int) -> int | None:
+    if 0 <= position_index < len(frame_indices):
+        try:
+            return int(frame_indices[position_index])
+        except (TypeError, ValueError):
+            return None
+
+    return None
 
 
 def _road_mask(
@@ -304,7 +568,11 @@ def _road_mask(
     rows: int,
     cols: int,
 ) -> list[list[int]]:
-    """Отметить коридор вокруг траектории как вероятную дорогу."""
+    """Отметить тонкий коридор вокруг маршрута.
+
+    В v2 коридор занимает одну ячейку по бокам, а не 3×3: карта
+    должна показывать маршрут, а не закрашивать пол-экрана.
+    """
 
     mask = [[0 for _ in range(cols)] for _ in range(rows)]
 
@@ -337,10 +605,9 @@ def _road_mask(
         selected = trajectory
 
     for col, row in selected:
-        for dx in (-1, 0, 1):
-            for dy in (-1, 0, 1):
-                x = max(0, min(cols - 1, col + dx))
-                y = max(0, min(rows - 1, row + dy))
-                mask[y][x] = 1
+        for dx, dy in ((0, 0), (-1, 0), (1, 0), (0, -1), (0, 1)):
+            x = max(0, min(cols - 1, col + dx))
+            y = max(0, min(rows - 1, row + dy))
+            mask[y][x] = 1
 
     return mask

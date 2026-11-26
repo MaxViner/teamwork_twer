@@ -27,9 +27,9 @@ from app.services.preprocessingService.prepare import prepare
 from app.services.summarizationService.context import extract_structure
 from app.services.summarizationService.summary import extract_summary
 from app.services.summarizationService.video_structure import extract_video_structure
+from app.services.visualAnalysisService.stage import extract_visual_analysis
 from app.services.visyalInspectorService.ocr import extract_ocr
 from app.services.visyalInspectorService.scenes import extract_scenes
-from app.services.visualAnalysisService.stage import extract_visual_analysis
 from app.storage import StorageService
 
 STAGES = (

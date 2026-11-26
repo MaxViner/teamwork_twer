@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from "react";
+
 import {
     fetchJob,
     fetchJobStatus,
 } from "../api/jobs.js";
+
 
 
 const TERMINAL = new Set([
@@ -10,6 +12,7 @@ const TERMINAL = new Set([
     "partial",
     "failed",
 ]);
+
 
 
 export function useJobPolling({
@@ -21,14 +24,18 @@ export function useJobPolling({
     const currentId = useRef(jobId);
     const generation = useRef(0);
 
+
     currentId.current = jobId;
+
 
 
     useEffect(() => {
         generation.current += 1;
 
+
         const token = generation.current;
         const controller = new AbortController();
+
 
 
         if (!jobId) {
@@ -37,20 +44,26 @@ export function useJobPolling({
         }
 
 
+
         let timer;
         let stopped = false;
         let revision = null;
 
 
+
         setJob(null);
+
 
 
         const poll = async () => {
             try {
                 const status = await fetchJobStatus(
                     jobId,
-                    { signal: controller.signal },
+                    {
+                        signal: controller.signal,
+                    },
                 );
+
 
 
                 if (
@@ -62,16 +75,24 @@ export function useJobPolling({
                 }
 
 
+
                 const nextRevision = JSON.stringify([
                     status.status,
-                    Object.entries(status.stages || {}).map((
+                    status.progress,
+                    status.stage_progress || {},
+                    Object.entries(
+                        status.stages || {},
+                    ).map((
                         [name, stage]
                     ) => [
                         name,
                         stage.status,
+                        stage.progress,
+                        stage.progress_message,
                         stage.result_run_id,
                     ]),
                 ]);
+
 
 
                 if (revision !== nextRevision) {
@@ -82,17 +103,22 @@ export function useJobPolling({
                     );
 
 
+
                     const data = shouldLoadFullJob
                         ? await fetchJob(
                             jobId,
-                            { signal: controller.signal },
+                            {
+                                signal: controller.signal,
+                            },
                         )
                         : {
                             ...status,
                             stages: Object.fromEntries(
                                 Object.entries(
-                                    status.stages || {}
-                                ).map(([name, stage]) => [
+                                    status.stages || {},
+                                ).map((
+                                    [name, stage]
+                                ) => [
                                     name,
                                     {
                                         ...stage,
@@ -105,6 +131,7 @@ export function useJobPolling({
                         };
 
 
+
                     if (
                         stopped
                         || generation.current !== token
@@ -114,8 +141,10 @@ export function useJobPolling({
                     }
 
 
+
                     revision = nextRevision;
                     setJob(data);
+
 
 
                 } else {
@@ -125,10 +154,12 @@ export function useJobPolling({
                         }
 
 
+
                         const progressChanged = (
                             previous.progress
                             !== status.progress
                         );
+
 
 
                         const stageProgressChanged = (
@@ -141,12 +172,35 @@ export function useJobPolling({
                         );
 
 
+
+                        const stagesChanged = Object.entries(
+                            status.stages || {},
+                        ).some((
+                            [name, stage]
+                        ) => {
+                            const previousStage =
+                                previous.stages?.[name] || {};
+
+
+
+                            return (
+                                previousStage.progress
+                                !== stage.progress
+                                || previousStage.progress_message
+                                !== stage.progress_message
+                            );
+                        });
+
+
+
                         if (
                             !progressChanged
                             && !stageProgressChanged
+                            && !stagesChanged
                         ) {
                             return previous;
                         }
+
 
 
                         return {
@@ -155,9 +209,26 @@ export function useJobPolling({
                             progress: status.progress,
                             stage_progress:
                                 status.stage_progress,
+                            stages: Object.fromEntries(
+                                Object.entries(
+                                    previous.stages || {},
+                                ).map((
+                                    [name, previousStage]
+                                ) => [
+                                    name,
+                                    {
+                                        ...previousStage,
+                                        ...(
+                                            status.stages?.[name]
+                                            || {}
+                                        ),
+                                    },
+                                ]),
+                            ),
                         };
                     });
                 }
+
 
 
                 if (!TERMINAL.has(status.status)) {
@@ -166,6 +237,7 @@ export function useJobPolling({
                         intervalMs,
                     );
                 }
+
 
 
             } catch (error) {
@@ -178,21 +250,28 @@ export function useJobPolling({
                 }
 
 
+
                 if (error.name === "AbortError") {
                     return;
                 }
 
 
+
                 onError(error.message);
                 timer = setTimeout(
                     poll,
-                    Math.max(intervalMs, 5000),
+                    Math.max(
+                        intervalMs,
+                        5000,
+                    ),
                 );
             }
         };
 
 
+
         poll();
+
 
 
         return () => {
@@ -202,7 +281,9 @@ export function useJobPolling({
         };
 
 
+
     }, [jobId, onError, intervalMs]);
+
 
 
     const refresh = async () => {
@@ -211,15 +292,20 @@ export function useJobPolling({
         }
 
 
+
         const token = generation.current;
         const controller = new AbortController();
+
 
 
         try {
             const data = await fetchJob(
                 jobId,
-                { signal: controller.signal },
+                {
+                    signal: controller.signal,
+                },
             );
+
 
 
             if (
@@ -230,10 +316,12 @@ export function useJobPolling({
             }
 
 
+
         } finally {
             controller.abort();
         }
     };
+
 
 
     return {

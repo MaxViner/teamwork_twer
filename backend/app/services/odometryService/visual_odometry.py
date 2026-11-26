@@ -1,9 +1,15 @@
 """Визуальная одометрия по паре кадров.
 
-Алгоритм: ORB-признаки, ratio test, essential-матрица через RANSAC
-и recoverPose. Кадры приводятся к одной высоте, чтобы масштаб
-пикселей совпадал. Камера считается откалиброванной: матрица K
-передаётся снаружи и пересчитывается под рабочую высоту.
+Алгоритм: ORB-признаки, ratio test, essential-матрица через
+USAC_MAGSAC (или RANSAC) и recoverPose. Кадры приводятся к одной
+высоте, чтобы масштаб пикселей совпадал, а перед детекцией
+применяется CLAHE — на пасмурных и сумеречных кадрах обычный ORB
+даёт слишком мало устойчивых точек.
+
+Важно: `recoverPose` возвращает нормированный вектор переноса, то
+есть длину шага в условных единицах, а не в метрах. Модуль честно
+помечает это в результате (`units: "relative"`); метры появляются
+только как грубая оценка в placeProfileService.
 
 Пары с размытием, малым числом совпадений или слабой геометрией
 не дают позу: estimate() возвращает None, а estimate_with_reason()
@@ -22,16 +28,32 @@ import numpy as np
 
 TARGET_HEIGHT = 960
 
-MIN_BLUR = 10.0
-ORB_FEATURES = 1500
-RATIO_TEST = 0.7
+# Порог дисперсии лапласиана. Слишком высокий отбрасывал нормальные
+# кадры с движением, поэтому он снижен, а слабые кадры дополнительно
+# спасает CLAHE.
+MIN_BLUR = 8.0
 
-MIN_MATCHES = 8
-MIN_INLIERS = 30
-MIN_QUALITY = 0.5
+# Больше признаков и мягче ratio: последовательные кадры видео часто
+# имеют малый базис и повторяющийся текстурированный фон.
+ORB_FEATURES = 2500
+RATIO_TEST = 0.75
+RATIO_RETRY = 0.85
 
-RANSAC_THRESHOLD = 1.0
+MIN_MATCHES = 12
+MIN_INLIERS = 20
+MIN_QUALITY = 0.12
+
+# Абсолютное число инлайеров важнее доли: на текстурированной сцене
+# совпадений может быть больше тысячи, и доля падает, хотя геометрия
+# надёжная.
+STRONG_INLIERS = 100
+
+RANSAC_THRESHOLD = 1.5
 RANSAC_PROB = 0.999
+
+# USAC_MAGSAC устойчивее RANSAC на вырожденных сценах, но есть не во
+# всех сборках OpenCV.
+RANSAC_METHOD = getattr(cv2, "USAC_MAGSAC", cv2.RANSAC)
 
 # Функция получает цветной кадр в рабочем разрешении и возвращает
 # маску uint8: 255 — рабочие пиксели, 0 — динамические объекты.
@@ -64,6 +86,9 @@ class VisualOdometry:
         # Причина последнего отказа: blur / few_matches / degenerate.
         self.last_reason: str | None = None
 
+        # Диагностика последнего вызова: признаки, совпадения, инлайеры.
+        self.diagnostics: dict = {}
+
     def estimate(
         self,
         frame_a: Path,
@@ -83,6 +108,7 @@ class VisualOdometry:
 
         self.timings = {}
         self.last_reason = None
+        self.diagnostics = {}
 
         image_a = _read_image(frame_a)
         image_b = _read_image(frame_b)
@@ -95,52 +121,80 @@ class VisualOdometry:
         blur_a = _blur_score(gray_a)
         blur_b = _blur_score(gray_b)
 
+        self.diagnostics.update({
+            "blur_a": round(float(blur_a), 2),
+            "blur_b": round(float(blur_b), 2),
+        })
+
         if blur_a < MIN_BLUR or blur_b < MIN_BLUR:
             return self._fail("blur")
 
         mask_a = self._mask(color_a)
         mask_b = self._mask(color_b)
 
+        # CLAHE выравнивает локальный контраст: на видео с пасмурной
+        # погодой это заметно повышает число устойчивых ORB-точек.
+        equalized_a = _equalize(gray_a)
+        equalized_b = _equalize(gray_b)
+
         started = time.perf_counter()
 
-        orb = cv2.ORB_create(nfeatures=ORB_FEATURES)
+        orb = cv2.ORB_create(
+            nfeatures=ORB_FEATURES,
+            scaleFactor=1.2,
+            nlevels=8,
+            edgeThreshold=19,
+            fastThreshold=12,
+        )
         keypoints_a, descriptors_a = orb.detectAndCompute(
-            gray_a,
+            equalized_a,
             mask_a,
         )
         keypoints_b, descriptors_b = orb.detectAndCompute(
-            gray_b,
+            equalized_b,
             mask_b,
         )
+
+        self.timings["orb"] = _elapsed_ms(started)
+
+        features_a = len(keypoints_a or [])
+        features_b = len(keypoints_b or [])
+
+        self.diagnostics.update({
+            "features_a": features_a,
+            "features_b": features_b,
+        })
 
         if (
             descriptors_a is None
             or descriptors_b is None
-            or len(keypoints_a) < 2
-            or len(keypoints_b) < 2
+            or features_a < 2
+            or features_b < 2
         ):
-            self.timings["orb"] = _elapsed_ms(started)
             return self._fail("few_matches")
 
+        started = time.perf_counter()
+
         matcher = cv2.BFMatcher(cv2.NORM_HAMMING)
-        pairs = matcher.knnMatch(
+        good = _match(
+            matcher,
             descriptors_a,
             descriptors_b,
-            k=2,
+            RATIO_TEST,
         )
 
-        good = []
+        if len(good) < MIN_MATCHES:
+            # Мягкий повтор: иногда строгий ratio оставляет 5–10
+            # совпадений, которых не хватает для RANSAC.
+            good = _match(
+                matcher,
+                descriptors_a,
+                descriptors_b,
+                RATIO_RETRY,
+            )
 
-        for pair in pairs:
-            if len(pair) < 2:
-                continue
-
-            first, second = pair
-
-            if first.distance < RATIO_TEST * second.distance:
-                good.append(first)
-
-        self.timings["orb"] = _elapsed_ms(started)
+        self.timings["match"] = _elapsed_ms(started)
+        self.diagnostics["matches"] = len(good)
 
         if len(good) < MIN_MATCHES:
             return self._fail("few_matches")
@@ -158,11 +212,11 @@ class VisualOdometry:
 
         started = time.perf_counter()
 
-        essential, _ = cv2.findEssentialMat(
+        essential, inlier_mask = cv2.findEssentialMat(
             points_a,
             points_b,
             cameraMatrix=matrix,
-            method=cv2.RANSAC,
+            method=RANSAC_METHOD,
             prob=RANSAC_PROB,
             threshold=RANSAC_THRESHOLD,
         )
@@ -197,18 +251,33 @@ class VisualOdometry:
 
         quality = inliers / max(len(good), 1)
 
-        if inliers < MIN_INLIERS or quality < MIN_QUALITY:
+        self.diagnostics.update({
+            "inliers": inliers,
+            "quality": round(float(quality), 4),
+        })
+
+        if inliers < MIN_INLIERS:
             return self._fail("few_matches")
+
+        if quality < MIN_QUALITY and inliers < STRONG_INLIERS:
+            return self._fail("few_matches")
+
+        translation = np.asarray(translation, dtype=float).reshape(3)
 
         return {
             "R": np.asarray(rotation, dtype=float).tolist(),
-            "t": np.asarray(translation, dtype=float)
-            .reshape(3)
-            .tolist(),
+            # Вектор единичной длины: направление движения, не метры.
+            "t": translation.tolist(),
+            "step_length": float(np.linalg.norm(translation)),
             "inliers": inliers,
             "quality": round(float(quality), 4),
             "blur_a": round(float(blur_a), 2),
             "blur_b": round(float(blur_b), 2),
+            "features_a": features_a,
+            "features_b": features_b,
+            "matches": len(good),
+            "units": "relative",
+            "method": "orb-essential-usac",
             "skipped": False,
         }, None
 
@@ -250,7 +319,47 @@ class VisualOdometry:
         """Запомнить причину отказа и вернуть пустой результат."""
 
         self.last_reason = reason
+        self.diagnostics["reason"] = reason
         return None, reason
+
+
+def _match(
+    matcher: cv2.BFMatcher,
+    descriptors_a: np.ndarray,
+    descriptors_b: np.ndarray,
+    ratio: float,
+) -> list:
+    """KNN-сопоставление с ratio test."""
+
+    pairs = matcher.knnMatch(
+        descriptors_a,
+        descriptors_b,
+        k=2,
+    )
+
+    good = []
+
+    for pair in pairs:
+        if len(pair) < 2:
+            continue
+
+        first, second = pair
+
+        if first.distance < ratio * second.distance:
+            good.append(first)
+
+    return good
+
+
+def _equalize(gray: np.ndarray) -> np.ndarray:
+    """Выровнять локальный контраст через CLAHE."""
+
+    clahe = cv2.createCLAHE(
+        clipLimit=2.0,
+        tileGridSize=(8, 8),
+    )
+
+    return clahe.apply(gray)
 
 
 def _read_image(image_path: Path) -> np.ndarray:

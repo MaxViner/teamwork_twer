@@ -272,7 +272,14 @@ export function useJobs({ onError }) {
 
         await deleteJob(jobId);
         const items = await loadJobs();
-        setSelectedId("");
+
+        // Выбор не сбрасываем здесь: контроллер сам решит, что
+        // открыть после удаления. Иначе удаление чужого задания
+        // закрывает текущее.
+        setSelectedId((current) => (
+            current === jobId ? "" : current
+        ));
+
         return items;
     }, [loadJobs]);
 

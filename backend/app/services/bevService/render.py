@@ -1,8 +1,10 @@
-"""Рендер топологической BEV-карты в PNG.
+"""Рендер anchor-BEV в PNG.
 
-Рисует сетку, коридор дороги, траекторию и объекты. Подписи —
-латинские метки классов; кириллица в cv2.putText не поддерживается.
-PNG пишется через imencode/tofile, чтобы работали пути с кириллицей.
+Карта v2 показывает маршрут и небольшое число сильных якорей.
+Слабые улики и «облако» детекций не рисуются: именно они делали
+прошлую карту нечитаемой. Подписи — латинские метки; кириллица в
+cv2.putText не поддерживается. PNG пишется через imencode/tofile,
+чтобы работали пути с кириллицей.
 """
 
 from __future__ import annotations
@@ -12,25 +14,19 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from app.services.bevService.projection import TYPE_COLORS
+
 
 CANVAS_SIZE = 800
-GRID_COLOR = (225, 225, 225)
-ROAD_COLOR = (205, 205, 205)
+GRID_COLOR = (232, 232, 232)
+ROAD_COLOR = (214, 214, 214)
 TRAJECTORY_COLOR = (200, 90, 20)
 TEXT_COLOR = (60, 60, 60)
-
-OBJECT_COLORS = (
-    (40, 160, 60),
-    (180, 90, 40),
-    (40, 90, 200),
-    (160, 40, 160),
-    (30, 160, 180),
-    (90, 90, 220),
-)
+MUTED_COLOR = (140, 140, 140)
 
 
 def render_bev_png(bev: dict, output_path: Path) -> Path:
-    """Нарисовать BEV и сохранить PNG. Возвращает путь файла."""
+    """Нарисовать маршрут и якоря, сохранить PNG."""
 
     grid = bev.get("grid") or {}
     rows = max(1, int(grid.get("rows") or 100))
@@ -50,19 +46,31 @@ def render_bev_png(bev: dict, output_path: Path) -> Path:
         rows,
         cols,
     )
-    _draw_objects(
+    _draw_anchors(
         canvas,
-        bev.get("objects") or [],
+        bev.get("anchors") or [],
         rows,
         cols,
     )
 
+    anchors = bev.get("anchors") or []
+
+    if anchors:
+        caption = (
+            f"Anchor BEV: {len(anchors)} key landmark(s), "
+            "route only, no metric"
+        )
+    else:
+        caption = (
+            "Anchor BEV: route only, no strong landmarks, no metric"
+        )
+
     cv2.putText(
         canvas,
-        "Topological BEV, no metric",
+        caption,
         (16, CANVAS_SIZE - 18),
         cv2.FONT_HERSHEY_SIMPLEX,
-        0.6,
+        0.5,
         TEXT_COLOR,
         1,
         cv2.LINE_AA,
@@ -100,9 +108,9 @@ def _draw_grid(
     rows: int,
     cols: int,
 ) -> None:
-    """Нарисовать сетку каждые 10 ячеек."""
+    """Нарисовать редкую сетку каждые 20 ячеек."""
 
-    step = 10
+    step = 20
 
     for col in range(0, cols, step):
         x, _ = _cell_to_pixel(col, 0, rows, cols)
@@ -119,7 +127,7 @@ def _draw_road(
     rows: int,
     cols: int,
 ) -> None:
-    """Закрасить ячейки дорожного коридора."""
+    """Закрасить тонкий коридор маршрута."""
 
     for row_index, row in enumerate(road_mask):
         for col_index, value in enumerate(row):
@@ -149,7 +157,7 @@ def _draw_trajectory(
     rows: int,
     cols: int,
 ) -> None:
-    """Нарисовать траекторию синей ломаной."""
+    """Нарисовать маршрут оранжевой ломаной."""
 
     if len(trajectory) < 2:
         return
@@ -164,57 +172,120 @@ def _draw_trajectory(
         [points],
         isClosed=False,
         color=TRAJECTORY_COLOR,
-        thickness=3,
+        thickness=4,
         lineType=cv2.LINE_AA,
     )
 
-    cv2.circle(
+    cv2.circle(canvas, tuple(points[0]), 7, (40, 160, 60), -1)
+    cv2.circle(canvas, tuple(points[-1]), 7, (40, 40, 200), -1)
+
+    cv2.putText(
         canvas,
-        tuple(points[0]),
-        6,
-        (40, 160, 60),
-        -1,
+        "start",
+        (points[0][0] + 9, points[0][1] + 4),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.42,
+        (40, 140, 60),
+        1,
+        cv2.LINE_AA,
     )
-    cv2.circle(
+    cv2.putText(
         canvas,
-        tuple(points[-1]),
-        6,
-        (40, 40, 200),
-        -1,
+        "end",
+        (points[-1][0] + 9, points[-1][1] + 4),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.42,
+        (40, 40, 180),
+        1,
+        cv2.LINE_AA,
     )
 
 
-def _draw_objects(
+def _draw_anchors(
     canvas: np.ndarray,
-    objects: list[dict],
+    anchors: list[dict],
     rows: int,
     cols: int,
 ) -> None:
-    """Нарисовать объекты точками и подписать классы."""
+    """Нарисовать якоря кругами с подписями и легендой."""
 
-    for index, item in enumerate(objects):
-        label = str(item.get("label") or "object")
-        color = OBJECT_COLORS[index % len(OBJECT_COLORS)]
-        cells = item.get("cells") or []
+    if not anchors:
+        return
 
-        for col, row in cells:
-            x, y = _cell_to_pixel(col, row, rows, cols)
-            cv2.circle(canvas, (x, y), 4, color, -1)
+    for index, item in enumerate(anchors):
+        cell = item.get("cell") or [0, 0]
+        x, y = _cell_to_pixel(cell[0], cell[1], rows, cols)
+        color = TYPE_COLORS.get(
+            str(item.get("type") or "other"),
+            TYPE_COLORS["other"],
+        )
+        radius = int(
+            max(8, min(28, float(item.get("radius_cells") or 2) * 6))
+        )
 
-        if cells:
-            x, y = _cell_to_pixel(
-                cells[0][0],
-                cells[0][1],
-                rows,
-                cols,
-            )
-            cv2.putText(
-                canvas,
-                label[:16],
-                (x + 6, y - 6),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.4,
-                color,
-                1,
-                cv2.LINE_AA,
-            )
+        cv2.circle(canvas, (x, y), radius, color, 2, cv2.LINE_AA)
+        cv2.circle(canvas, (x, y), 4, color, -1, cv2.LINE_AA)
+
+        label = str(item.get("label") or "clue")[:18]
+        cv2.putText(
+            canvas,
+            f"{index + 1}. {label}",
+            (x + radius + 4, y + 4),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.4,
+            color,
+            1,
+            cv2.LINE_AA,
+        )
+
+    _draw_legend(canvas, anchors)
+
+
+def _draw_legend(canvas: np.ndarray, anchors: list[dict]) -> None:
+    """Короткая легенда: номер, метка, уверенность."""
+
+    x = 14
+    y = 24
+
+    cv2.putText(
+        canvas,
+        "Key landmarks:",
+        (x, y),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.48,
+        TEXT_COLOR,
+        1,
+        cv2.LINE_AA,
+    )
+
+    for index, item in enumerate(anchors[:8]):
+        y += 20
+        color = TYPE_COLORS.get(
+            str(item.get("type") or "other"),
+            TYPE_COLORS["other"],
+        )
+        label = str(item.get("label") or "clue")[:24]
+        confidence = float(item.get("confidence") or 0.0)
+
+        cv2.putText(
+            canvas,
+            f"{index + 1}. {label} ({confidence:.2f})",
+            (x, y),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.38,
+            color,
+            1,
+            cv2.LINE_AA,
+        )
+
+    if len(anchors) > 8:
+        cv2.putText(
+            canvas,
+            f"+{len(anchors) - 8} more",
+            (x, y + 20),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.38,
+            MUTED_COLOR,
+            1,
+            cv2.LINE_AA,
+        )
