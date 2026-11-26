@@ -1,9 +1,17 @@
-"""Тестовые эндпоинты для визуальных сервисов.
+"""Тестовые эндпоинты визуальных сервисов.
 
 Роутер доступен только при ENABLE_TEST_ENDPOINTS=1. Он не создаёт
 задание и не пишет в job.json: файл сохраняется во временную папку,
-анализируется и удаляется. Нужен для быстрой проверки YOLO,
-SegFormer, лиц и метрик на одном изображении.
+анализируется и удаляется.
+
+Здесь собраны все обработчики визуального сервиса:
+- метрики и словесные дескрипторы кадра;
+- гео-улики Grounding DINO tiny + SAM2.1 hiera tiny (geo_clues);
+- семантическая разметка SegFormer;
+- лица YuNet;
+- одометрия двух кадров и тест AI-чата.
+
+Отдельный /api/geo-clues оставлен для проверки только гео-улик.
 """
 
 from __future__ import annotations
@@ -20,9 +28,8 @@ from PIL import Image
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
-from app.config import MODELS_DIR
+from app.services import geoCluesService
 from app.services.aiService import client as ai_client
-from app.services.objectDetectionService.detector import YoloDetector
 from app.services.odometryService.visual_odometry import VisualOdometry
 from app.services.visualAnalysisService.faces import detect_faces
 from app.services.visualAnalysisService.metrics import (
@@ -37,8 +44,11 @@ test_router = APIRouter(
     tags=["test"],
 )
 
-# Одна сессия ONNX на процесс: чтение модели занимает заметное время.
-_DETECTOR: YoloDetector | None = None
+# Короткий алиас из ТЗ: /api/geo-clues.
+geo_clue_router = APIRouter(
+    prefix="/api",
+    tags=["test"],
+)
 
 _ENABLED_VALUES = {"1", "true", "yes", "on"}
 
@@ -56,21 +66,8 @@ def _ensure_enabled() -> None:
         raise HTTPException(404, "Not Found")
 
 
-def _detector() -> YoloDetector:
-    """Лениво открыть общий детектор YOLO."""
-
-    global _DETECTOR
-
-    if _DETECTOR is None:
-        _DETECTOR = YoloDetector(
-            MODELS_DIR / "yolov8n.onnx",
-        )
-
-    return _DETECTOR
-
-
 def _analyze_image(path: Path) -> dict:
-    """Прогнать изображение через метрики, YOLO, лица и SegFormer."""
+    """Прогнать изображение через все визуальные обработчики."""
 
     timings: dict[str, int] = {}
 
@@ -80,8 +77,8 @@ def _analyze_image(path: Path) -> dict:
     timings["metrics"] = _elapsed_ms(started)
 
     started = time.perf_counter()
-    detections = _detector().detect(path)
-    timings["yolo"] = _elapsed_ms(started)
+    clue_result = geoCluesService.analyze_frame(path)
+    timings["geo_clues"] = _elapsed_ms(started)
 
     started = time.perf_counter()
     faces = detect_faces(path)
@@ -100,62 +97,64 @@ def _analyze_image(path: Path) -> dict:
         if part
     )
 
+    clues = clue_result.get("geo_clues") or []
+
     return {
+        "image_size": clue_result.get("image_size"),
         "metrics": metrics,
         "descriptors": descriptors,
-        "detections": detections,
+        "geo_clues": clues,
+        "frame_summary": clue_result.get("frame_summary"),
+        "detections": _legacy_detections(clues),
         "faces": faces,
         "segments": segments,
         "text_description": text_description,
+        "models": clue_result.get("models"),
+        "model_status": geoCluesService.status(),
+        "geo_clue_error": clue_result.get("error"),
+        "geo_clue_timings_ms": clue_result.get("timings_ms"),
         "inference_time_ms": timings,
     }
+
+
+def _analyze_geo_clues(path: Path) -> dict:
+    """Прогнать только детектор и сегментатор гео-улик."""
+
+    result = geoCluesService.analyze_frame(path)
+    clues = result.get("geo_clues") or []
+
+    return {
+        "image_size": result.get("image_size"),
+        "geo_clues": clues,
+        "frame_summary": result.get("frame_summary"),
+        "detections": _legacy_detections(clues),
+        "models": result.get("models"),
+        "model_status": geoCluesService.status(),
+        "error": result.get("error"),
+        "timings_ms": result.get("timings_ms"),
+    }
+
+
+def _legacy_detections(clues: list[dict]) -> list[dict]:
+    return [
+        {
+            "label": item["label"],
+            "label_ru": item["label_ru"],
+            "category": "geo_clue",
+            "confidence": item["confidence"],
+            "bbox": item["bbox"],
+            "is_dynamic": False,
+            "type": item["type"],
+            "match_priority": item["match_priority"],
+        }
+        for item in clues
+    ]
 
 
 def _elapsed_ms(started: float) -> int:
     """Перевести прошедшее время в целые миллисекунды."""
 
     return int(round((time.perf_counter() - started) * 1000))
-
-
-@test_router.post("/vision")
-async def vision_test(file: UploadFile = File(...)) -> dict:
-    """Проверить визуальные сервисы на загруженном изображении."""
-
-    _ensure_enabled()
-
-    suffix = Path(file.filename or "upload.jpg").suffix or ".jpg"
-
-    handle, name = tempfile.mkstemp(suffix=suffix)
-    os.close(handle)
-
-    path = Path(name)
-
-    try:
-        payload = await file.read()
-
-        if not payload:
-            raise HTTPException(400, "Файл пустой.")
-
-        path.write_bytes(payload)
-
-        result = await run_in_threadpool(_analyze_image, path)
-
-    except HTTPException:
-        raise
-
-    except Exception as error:
-        raise HTTPException(
-            500,
-            f"Не удалось разобрать изображение: {str(error)[:500]}",
-        ) from None
-
-    finally:
-        path.unlink(missing_ok=True)
-
-    return {
-        "filename": file.filename,
-        **result,
-    }
 
 
 async def _write_upload(
@@ -181,13 +180,81 @@ async def _write_upload(
     return path
 
 
-def _default_camera_matrix(path: Path) -> np.ndarray:
-    """Собрать правдоподобную K по размеру кадра.
+async def _vision_response(upload: UploadFile) -> dict:
+    _ensure_enabled()
 
-    Тестовый эндпоинт не знает реальную калибровку, поэтому берёт
-    фокусное расстояние порядка 0.9 от большей стороны. Для проверки
-    контракта этого достаточно.
-    """
+    paths: list[Path] = []
+
+    try:
+        path = await _write_upload(upload, paths)
+        result = await run_in_threadpool(_analyze_image, path)
+
+    except HTTPException:
+        raise
+
+    except Exception as error:
+        raise HTTPException(
+            500,
+            f"Не удалось разобрать изображение: {str(error)[:500]}",
+        ) from None
+
+    finally:
+        for path in paths:
+            path.unlink(missing_ok=True)
+
+    return {
+        "filename": upload.filename,
+        **result,
+    }
+
+
+@test_router.post("/vision")
+async def vision_test(file: UploadFile = File(...)) -> dict:
+    """Проверить все визуальные сервисы на одном изображении."""
+
+    return await _vision_response(file)
+
+
+@test_router.post("/geo-clues")
+async def geo_clues_test(file: UploadFile = File(...)) -> dict:
+    """Проверить только гео-улики на одном изображении."""
+
+    _ensure_enabled()
+
+    paths: list[Path] = []
+
+    try:
+        path = await _write_upload(file, paths)
+        result = await run_in_threadpool(_analyze_geo_clues, path)
+
+    except HTTPException:
+        raise
+
+    except Exception as error:
+        raise HTTPException(
+            500,
+            f"Не удалось найти гео-улики: {str(error)[:500]}",
+        ) from None
+
+    finally:
+        for path in paths:
+            path.unlink(missing_ok=True)
+
+    return {
+        "filename": file.filename,
+        **result,
+    }
+
+
+@geo_clue_router.post("/geo-clues")
+async def geo_clues_alias(file: UploadFile = File(...)) -> dict:
+    """Алиас /api/geo-clues из ТЗ."""
+
+    return await geo_clues_test(file)
+
+
+def _default_camera_matrix(path: Path) -> np.ndarray:
+    """Собрать правдоподобную K по размеру кадра."""
 
     with Image.open(path) as image:
         width, height = image.size

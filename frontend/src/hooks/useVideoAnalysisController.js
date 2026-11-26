@@ -87,8 +87,8 @@ export function useVideoAnalysisController() {
         }
     };
 
-    const handleRemove = async () => {
-        if (!jobsState.selectedId) {
+    const handleDeleteJob = async (jobId) => {
+        if (!jobId) {
             return;
         }
 
@@ -99,10 +99,51 @@ export function useVideoAnalysisController() {
         setError("");
 
         try {
-            await jobsState.remove(jobsState.selectedId);
-            jobsState.setSelectedId(null);
-            setUploadPanelKey((current) => current + 1);
-            await jobsState.loadJobs();
+            const wasSelected = jobId === jobsState.selectedId;
+            const items = await jobsState.remove(jobId);
+
+            if (wasSelected) {
+                jobsState.setSelectedId(items?.[0]?.id || "");
+                setUploadPanelKey((current) => current + 1);
+            }
+        } catch (error) {
+            onError(error.message);
+        }
+    };
+
+    const handleRemove = () => handleDeleteJob(jobsState.selectedId);
+
+    const handlePauseJob = async (jobId) => {
+        if (!jobId) {
+            return;
+        }
+
+        setError("");
+
+        try {
+            await jobsState.pause(jobId);
+
+            if (jobId === jobsState.selectedId) {
+                await refresh();
+            }
+        } catch (error) {
+            onError(error.message);
+        }
+    };
+
+    const handleResumeJob = async (jobId) => {
+        if (!jobId) {
+            return;
+        }
+
+        setError("");
+
+        try {
+            await jobsState.resume(jobId);
+
+            if (jobId === jobsState.selectedId) {
+                await refresh();
+            }
         } catch (error) {
             onError(error.message);
         }
@@ -147,6 +188,9 @@ export function useVideoAnalysisController() {
             handleUpload,
             handleRetry,
             handleRemove,
+            handleDeleteJob,
+            handlePauseJob,
+            handleResumeJob,
             handleSave,
             handleRefreshJobs,
         },

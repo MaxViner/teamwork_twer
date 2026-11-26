@@ -201,6 +201,26 @@ export const deleteJob = (id) =>
 
 
 
+export const pauseJob = (id) =>
+    request(
+        `/jobs/${id}/pause`,
+        {
+            method: "POST",
+        },
+    );
+
+
+
+export const resumeJob = (id) =>
+    request(
+        `/jobs/${id}/resume`,
+        {
+            method: "POST",
+        },
+    );
+
+
+
 export function updateObservation(
     jobId,
     observationId,

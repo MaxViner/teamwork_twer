@@ -5,6 +5,8 @@ import {
     fetchJob,
     fetchJobStatus,
     fetchJobs,
+    pauseJob,
+    resumeJob,
 } from "../api/jobs.js";
 
 
@@ -269,8 +271,21 @@ export function useJobs({ onError }) {
 
 
         await deleteJob(jobId);
-        await loadJobs();
+        const items = await loadJobs();
         setSelectedId("");
+        return items;
+    }, [loadJobs]);
+
+
+    const pause = useCallback(async (jobId) => {
+        await pauseJob(jobId);
+        await loadJobs();
+    }, [loadJobs]);
+
+
+    const resume = useCallback(async (jobId) => {
+        await resumeJob(jobId);
+        await loadJobs();
     }, [loadJobs]);
 
 
@@ -295,6 +310,24 @@ export function useJobs({ onError }) {
     }, [loadJobs, onError]);
 
 
+    useEffect(() => {
+        const active = jobs.some((job) => (
+            job.status === "queued"
+            || job.status === "running"
+        ));
+
+        if (!active) {
+            return undefined;
+        }
+
+        const timer = setInterval(() => {
+            loadJobs().catch(() => {});
+        }, 4000);
+
+        return () => clearInterval(timer);
+    }, [jobs, loadJobs]);
+
+
     return {
         jobs,
         selectedId,
@@ -306,6 +339,8 @@ export function useJobs({ onError }) {
         prepareMessage,
         upload,
         remove,
+        pause,
+        resume,
         loadJobs,
     };
 }

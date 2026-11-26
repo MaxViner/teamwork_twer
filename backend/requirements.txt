@@ -11,3 +11,4 @@ easyocr
 transformers
 torch
 onnxruntime
+sahi

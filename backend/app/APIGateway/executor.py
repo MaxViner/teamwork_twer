@@ -11,7 +11,7 @@ from uuid import uuid4
 import psutil
 from fastapi import HTTPException
 
-from app.utils.errors import SkipStage
+from app.utils.errors import PauseRequested, SkipStage
 from app.APIGateway.jobs import (
     DATA,
     LAST_PROGRESS_UPDATE,
@@ -32,6 +32,15 @@ POOL = ThreadPoolExecutor(
     thread_name_prefix="video-analysis",
 )
 
+# Задания, для которых пользователь запросил паузу. Множество
+# проверяется в progress-callback, чтобы длинный этап остановился
+# на ближайшем обновлении прогресса.
+PAUSED_JOBS: set[str] = set()
+
+
+def is_paused(job_id: str) -> bool:
+    return job_id in PAUSED_JOBS
+
 def log_memory(stage: str):
     process = psutil.Process()
     print(
@@ -42,12 +51,27 @@ def log_memory(stage: str):
     
 def execute(job_id: str, selected: list[str]) -> None:
     try:
+        if is_paused(job_id):
+            _mark_paused(job_id)
+            return
+
         mutate_job(job_id, lambda job: job.update(status="running"))
 
         for stage in selected:
+            if is_paused(job_id):
+                _mark_paused(job_id)
+                return
+
             _run_selected_stage(job_id, stage)
 
+            if is_paused(job_id):
+                _mark_paused(job_id)
+                return
+
         _finish_job(job_id)
+
+    except PauseRequested:
+        _mark_paused(job_id)
 
     except Exception as error:
         try:
@@ -96,15 +120,25 @@ def _run_selected_stage(job_id: str, stage: str) -> None:
             run_id=run_id,
             options=snapshot["options"],
             stages=snapshot["stages"],
-            progress=lambda percent, message: set_stage_progress(
+            progress=lambda percent, message: _report_progress(
                 job_id,
                 stage,
                 percent,
                 message,
-)        )
+            ),
+        )
 
         observations = result.pop("observations", [])
         _complete_stage(job_id, stage, result, observations, run_id)
+
+    except PauseRequested:
+        _mark_stage(job_id, stage, {
+            "status": "paused",
+            "note": "Пауза по запросу пользователя.",
+            "error": None,
+            "progress_message": "Пауза",
+        })
+        raise
 
     except SkipStage as error:
         _mark_stage(job_id, stage, {
@@ -215,6 +249,129 @@ def _finish_job(job_id: str) -> None:
    
     
     mutate_job(job_id, finish)
+
+
+def _report_progress(
+    job_id: str,
+    stage: str,
+    percent: float,
+    message: str | None,
+) -> None:
+    """Обновить прогресс или прервать этап по запросу паузы."""
+
+    if is_paused(job_id):
+        raise PauseRequested()
+
+    set_stage_progress(
+        job_id,
+        stage,
+        percent,
+        message,
+    )
+
+
+def _mark_paused(job_id: str) -> None:
+    """Зафиксировать паузу в job.json."""
+
+    def update(job):
+        job["status"] = "paused"
+        job["progress"] = "Пауза"
+        job["pause_requested"] = True
+
+        for state in (job.get("stages") or {}).values():
+            if state.get("status") == "running":
+                state["status"] = "paused"
+                state["progress_message"] = "Пауза"
+
+    mutate_job(job_id, update)
+
+
+def request_pause(job_id: str) -> dict:
+    """Поставить задание на паузу.
+
+    Для queued/created пауза применяется сразу. Для running —
+    выставляется флаг, и этап останавливается на ближайшем
+    обновлении прогресса.
+    """
+
+    with LOCK:
+        job = load_job(job_id)
+        status = job.get("status")
+
+        if status in ("completed", "partial", "failed"):
+            raise HTTPException(
+                409,
+                "Задание уже завершено.",
+            )
+
+        PAUSED_JOBS.add(job_id)
+
+        def update(current):
+            current["pause_requested"] = True
+
+            if current.get("status") in ("queued", "created"):
+                current["status"] = "paused"
+                current["progress"] = "Пауза"
+
+                for state in (current.get("stages") or {}).values():
+                    if state.get("status") == "pending":
+                        state["note"] = "Пауза"
+
+            else:
+                current["progress"] = (
+                    "Пауза запрошена: завершаю текущий шаг"
+                )
+
+        mutate_job(job_id, update)
+
+        return load_job(job_id)
+
+
+def request_resume(job_id: str) -> dict:
+    """Продолжить задание с первого незавершённого этапа."""
+
+    with LOCK:
+        job = load_job(job_id)
+
+        if job.get("status") != "paused":
+            raise HTTPException(
+                409,
+                "Задание не стоит на паузе.",
+            )
+
+        PAUSED_JOBS.discard(job_id)
+
+        mutate_job(
+            job_id,
+            lambda current: current.update(
+                pause_requested=False,
+                progress="Возобновление",
+            ),
+        )
+
+        remaining = _remaining_stages(job)
+
+        if not remaining:
+            _finish_job(job_id)
+            return load_job(job_id)
+
+        schedule(job_id, remaining)
+
+        return load_job(job_id)
+
+
+def _remaining_stages(job: dict) -> list[str]:
+    """Этапы, начиная с первого незавершённого."""
+
+    states = job.get("stages") or {}
+
+    for index, stage in enumerate(STAGES):
+        state = states.get(stage) or {}
+
+        if state.get("status") not in ("completed", "skipped"):
+            return list(STAGES[index:])
+
+    return []
 
 
 def schedule(job_id: str, selected: list[str]) -> None:

@@ -18,7 +18,11 @@ from fastapi import (
 from pydantic import ValidationError
 
 
-from app.APIGateway.executor import schedule
+from app.APIGateway.executor import (
+    request_pause,
+    request_resume,
+    schedule,
+)
 from app.APIGateway.jobs import (
     LOCK,
     load_job,
@@ -56,12 +60,14 @@ def list_jobs():
 
 
             items.append({
-                key: job[key]
+                key: job.get(key)
                 for key in (
                     "id",
                     "name",
                     "status",
+                    "progress",
                     "created_at",
+                    "updated_at",
                 )
             })
 
@@ -226,6 +232,32 @@ def get_job_status(job_id: str):
         },
     }
 
+
+
+@router.post("/{job_id}/pause")
+def pause_job(job_id: str):
+    """Поставить задание на паузу."""
+
+    job = request_pause(job_id)
+
+    return {
+        "id": job["id"],
+        "status": job.get("status"),
+        "progress": job.get("progress"),
+    }
+
+
+@router.post("/{job_id}/resume")
+def resume_job(job_id: str):
+    """Продолжить задание с первого незавершённого этапа."""
+
+    job = request_resume(job_id)
+
+    return {
+        "id": job["id"],
+        "status": job.get("status"),
+        "progress": job.get("progress"),
+    }
 
 
 @router.get("/{job_id}/map-query")

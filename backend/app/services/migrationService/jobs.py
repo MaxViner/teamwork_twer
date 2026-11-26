@@ -95,6 +95,8 @@ def _merge_visual_frames(
             "descriptors": {},
             "segments": [],
             "objects": [],
+            "geo_clues": [],
+            "frame_summary": None,
             "detections": [],
             "faces": [],
         })
@@ -164,6 +166,9 @@ def build_visual_analysis(job: dict) -> dict:
 
     counts = {
         "frames": len(frames),
+        "geo_clues_total": 0,
+        "strong_clues_total": 0,
+        "frames_with_geo_clues": 0,
         "detections_total": 0,
         "faces_total": faces.get("face_count") or 0,
         "unique_classes": len({
@@ -177,7 +182,9 @@ def build_visual_analysis(job: dict) -> dict:
         "frames": frames,
         "profile": profile,
         "unique_objects": unique_objects,
+        "unique_geo_clues": [],
         "unique_detections": [],
+        "frame_summaries": [],
         "people": people,
         "observations": _rewrite_observations(
             _observations(job, VISUAL_SOURCES),

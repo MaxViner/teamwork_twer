@@ -4,14 +4,15 @@
 
 - visual_profile — метрики и словесное описание сцены;
 - scene_objects — семантическая разметка SegFormer (или эвристики);
-- object_detection — детекция YOLOv8n;
+- object_detection — гео-улики Grounding DINO tiny + SAM2;
 - faces — лица YuNet и анонимная кластеризация.
 
 Результат сохраняет старые имена полей (frames[*].metrics,
 frames[*].descriptors, frames[*].objects, profile, unique_objects,
 people), чтобы потребители могли перейти на новый ключ
 visual_analysis без потери данных. Новые поля — segments,
-detections, counts, detector_error, face_available.
+geo_clues, frame_summary, detections (старый формат), counts,
+detector_error, face_available.
 
 Файловых артефактов стадия не создаёт: кадры уже лежат в
 runs/<run_id>/ и переиспользуются по artifact.
@@ -45,6 +46,9 @@ METRICS_SHARE = 15.0
 DETECTION_SHARE = 50.0
 SEGMENTATION_SHARE = 30.0
 FACES_SHARE = 5.0
+
+# Детекция гео-улик теперь включает и SAM2, поэтому её доля
+# прогресса остаётся самой большой.
 
 MAX_ERROR_EXAMPLES = 20
 
@@ -119,6 +123,8 @@ def extract_visual_analysis(
             "descriptors": descriptors,
             "segments": [],
             "objects": [],
+            "geo_clues": [],
+            "frame_summary": None,
             "detections": [],
             "faces": [],
         })
@@ -133,15 +139,24 @@ def extract_visual_analysis(
     timings["metrics"] = _elapsed_ms(started)
 
     started = time.perf_counter()
-    detections = detection.detect_frames(
+    clue_results = detection.detect_frames(
         analyzed,
         _scaled(progress, METRICS_SHARE, DETECTION_SHARE),
     )
 
-    for frame, items in zip(analyzed, detections):
-        frame["detections"] = items
+    for frame, result in zip(analyzed, clue_results):
+        frame["geo_clues"] = result.get("geo_clues") or []
+        frame["frame_summary"] = result.get("frame_summary")
+        frame["detections"] = result.get("detections") or []
+        frame["geo_clue_error"] = result.get("error")
+        frame["geo_clue_analyzed"] = bool(
+            result.get("analyzed")
+        )
+        frame["geo_clue_image_size"] = result.get(
+            "image_size"
+        )
 
-    timings["detection"] = _elapsed_ms(started)
+    timings["geo_clues"] = _elapsed_ms(started)
 
     started = time.perf_counter()
     segments_result = segmentation.extract_segments(
@@ -209,17 +224,32 @@ def extract_visual_analysis(
 
     profile = aggregate_profile(analyzed)
     unique_objects = segmentation.unique_objects_from_frames(analyzed)
+    unique_geo_clues = detection.unique_geo_clues_from_frames(analyzed)
     unique_detections = detection.unique_detections_from_frames(analyzed)
 
     counts = {
         "frames": len(analyzed),
+        "geo_clues_total": sum(
+            len(frame["geo_clues"]) for frame in analyzed
+        ),
+        "strong_clues_total": sum(
+            sum(
+                1
+                for item in frame["geo_clues"]
+                if item.get("match_priority") == "high"
+            )
+            for frame in analyzed
+        ),
+        "frames_with_geo_clues": sum(
+            bool(frame["geo_clues"]) for frame in analyzed
+        ),
         "detections_total": sum(
             len(frame["detections"]) for frame in analyzed
         ),
         "faces_total": face_total,
         "unique_classes": len(
             {item["label"] for item in unique_objects}
-            | {item["label"] for item in unique_detections}
+            | {item["label"] for item in unique_geo_clues}
         ),
     }
 
@@ -227,7 +257,7 @@ def extract_visual_analysis(
         analyzed,
         profile,
         unique_objects,
-        unique_detections,
+        unique_geo_clues,
         people,
         face_available,
         face_total,
@@ -239,13 +269,26 @@ def extract_visual_analysis(
         "frames": analyzed,
         "profile": profile,
         "unique_objects": unique_objects,
+        "unique_geo_clues": unique_geo_clues,
         "unique_detections": unique_detections,
+        "frame_summaries": [
+            {
+                "timestamp": frame["timestamp"],
+                "artifact": frame["artifact"],
+                **(frame["frame_summary"] or {}),
+            }
+            for frame in analyzed
+            if frame.get("frame_summary")
+        ],
         "people": people,
         "observations": observations,
         "counts": counts,
         "timings_ms": timings,
         "detector_available": detection.detector_available(),
         "detector_error": detection.detector_error(),
+        "geo_clue_models": detection.model_status()
+        if hasattr(detection, "model_status")
+        else None,
         "face_available": face_available,
         "method": segments_result.get("method"),
         "model": segments_result.get("model"),
@@ -271,9 +314,9 @@ def extract_visual_analysis(
             bool(frame["faces"]) for frame in analyzed
         ),
         "note": (
-            "Метрики, семантическая разметка, YOLO-детекции и лица "
-            "собраны в один проход. Это визуальные улики, а не "
-            "подтверждённые координаты."
+            "Метрики, семантическая разметка, гео-улики "
+            "(Grounding DINO + SAM2) и лица собраны в один проход. "
+            "Это визуальные улики, а не подтверждённые координаты."
         ),
     }
 
@@ -282,7 +325,7 @@ def _build_observations(
     frames: list[dict],
     profile: dict,
     unique_objects: list[dict],
-    unique_detections: list[dict],
+    unique_geo_clues: list[dict],
     people: list[dict],
     face_available: bool,
     face_total: int,
@@ -341,10 +384,25 @@ def _build_observations(
             )
         )
 
-    if unique_detections:
+    if unique_geo_clues:
+        strong = [
+            item
+            for item in unique_geo_clues
+            if item.get("match_priority") == "high"
+        ]
         top = ", ".join(
-            f"{item['label']} ({item['frame_count']} кадр.)"
-            for item in unique_detections[:8]
+            f"{item['label_ru']} ({item['frame_count']} кадр.)"
+            for item in unique_geo_clues[:8]
+        )
+        summaries = [
+            frame.get("frame_summary")
+            for frame in frames
+            if frame.get("frame_summary")
+        ]
+        terrain = (
+            summaries[0].get("dominant_terrain_ru")
+            if summaries
+            else None
         )
 
         observations.append(
@@ -353,14 +411,22 @@ def _build_observations(
                 start=start,
                 end=end,
                 text=(
-                    f"YOLO-детекции: {len(unique_detections)} "
-                    f"классов. {top}."
+                    f"Гео-улики: {len(unique_geo_clues)} типов, "
+                    f"из них сильных — {len(strong)}. {top}."
+                    + (
+                        f" Доминирующий ландшафт: {terrain}."
+                        if terrain
+                        else ""
+                    )
                 ),
-                extractor="yolov8n-onnxruntime",
+                extractor="grounding-dino-tiny-sam2-hiera-tiny",
                 data={
-                    "kind": "object_detection_summary",
-                    "detection_count": len(unique_detections),
-                    "detections": unique_detections,
+                    "kind": "geo_clue_summary",
+                    "clue_count": len(unique_geo_clues),
+                    "strong_clue_count": len(strong),
+                    "dominant_terrain": terrain,
+                    "geo_clues": unique_geo_clues,
+                    "frame_summaries": summaries,
                     "machine_generated": True,
                     "requires_review": True,
                 },

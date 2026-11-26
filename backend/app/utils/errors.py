@@ -2,13 +2,18 @@
 
 SkipStage — этап штатно пропущен (например, в видео нет звука).
 JobError — ошибка состояния или выполнения задания.
+PauseRequested — пользователь поставил задание на паузу; executor
+ловит его и сохраняет состояние вместо ошибки этапа.
 """
 
-class SkipStage(Exception):
-    pass
+
 class JobError(Exception):
     """Ошибка состояния или выполнения задания."""
 
 
 class SkipStage(Exception):
     """Этап должен быть пропущен без пометки как failed."""
+
+
+class PauseRequested(Exception):
+    """Текущий этап прерван по запросу паузы."""

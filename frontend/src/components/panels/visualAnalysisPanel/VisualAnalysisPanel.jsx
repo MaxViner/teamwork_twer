@@ -27,10 +27,17 @@ const TABS = [
     { id: "objects", label: "Объекты" },
     { id: "scenes", label: "Сцены" },
     { id: "ocr", label: "Текст" },
-    { id: "detections", label: "YOLO-детекции" },
+    { id: "detections", label: "Гео-улики" },
     { id: "segments", label: "Семантика" },
     { id: "faces", label: "Лица" },
 ];
+
+
+const PRIORITY_LABELS = {
+    high: "сильная улика",
+    medium: "средняя улика",
+    low: "слабая улика",
+};
 
 const OCR_PER_PAGE = 60;
 
@@ -225,48 +232,130 @@ function ObjectsTab({ job, result, onSeek }) {
 }
 
 
-function DetectionsTab({ job, result, onSeek }) {
-    const items = Array.isArray(result.unique_detections)
-        ? result.unique_detections
+function ClueThumb({ job, item, onSeek }) {
+    const timestamps = Array.isArray(item.timestamps)
+        ? item.timestamps
         : [];
+    const size = Array.isArray(item.best_image_size)
+        ? item.best_image_size
+        : null;
+    const polygon = Array.isArray(item.best_polygon)
+        ? item.best_polygon
+        : [];
+    const points = polygon
+        .map((point) => point.join(","))
+        .join(" ");
+
+    if (!item.best_frame) {
+        return null;
+    }
+
+    return (
+        <button
+            className="landmark-thumb geo-clue-thumb"
+            onClick={() => onSeek(
+                item.best_timestamp
+                ?? timestamps[0]
+                ?? 0,
+            )}
+            title="Перейти к лучшему кадру"
+        >
+            <img
+                src={fileUrl(job.id, item.best_frame)}
+                alt={item.label_ru || item.label}
+                loading="lazy"
+            />
+
+            {size && points && (
+                <svg
+                    className="geo-clue-overlay"
+                    viewBox={`0 0 ${size[0]} ${size[1]}`}
+                    preserveAspectRatio="xMidYMid meet"
+                    aria-hidden="true"
+                >
+                    <polygon points={points} />
+                </svg>
+            )}
+        </button>
+    );
+}
+
+
+function GeoCluesTab({ job, result, onSeek }) {
+    const items = Array.isArray(result.unique_geo_clues)
+        ? result.unique_geo_clues
+        : [];
+    const summaries = Array.isArray(result.frame_summaries)
+        ? result.frame_summaries
+        : [];
+    const counts = result.counts || {};
+    const firstSummary = summaries[0] || null;
 
     if (!items.length) {
         return (
-            <p className="muted">
-                {result.detector_available === false
-                    ? `YOLO недоступен: ${result.detector_error || "модель не загружена"}.`
-                    : "Детекции не найдены."}
-            </p>
+            <div className="insight-block">
+                <p className="muted">
+                    {result.detector_available === false
+                        ? `Детектор гео-улик недоступен: ${
+                            result.detector_error
+                            || "модель не загружена"
+                        }.`
+                        : "Гео-улики не найдены."}
+                </p>
+
+                {result.detector_error && result.detector_available !== false && (
+                    <p className="muted">{result.detector_error}</p>
+                )}
+            </div>
         );
     }
 
     return (
         <div className="landmark-groups">
+            <div className="geo-clue-summary">
+                <div>
+                    <strong>Вывод по кадрам</strong>
+                    <p className="muted">
+                        {firstSummary?.summary_text
+                            || "Сильные улики помогают сузить район поиска; слабые — только уточняют контекст."}
+                    </p>
+                </div>
+
+                <div className="insight-chips">
+                    <span className="insight-chip">
+                        Сильных: {counts.strong_clues_total ?? 0}
+                    </span>
+                    <span className="insight-chip">
+                        Кадров с уликами: {counts.frames_with_geo_clues ?? 0}
+                    </span>
+                    {firstSummary?.dominant_terrain_ru && (
+                        <span className="insight-chip">
+                            {firstSummary.dominant_terrain_ru}
+                        </span>
+                    )}
+                </div>
+
+                {firstSummary?.suggested_next_step && (
+                    <p className="muted">
+                        Следующий шаг: {firstSummary.suggested_next_step}
+                    </p>
+                )}
+            </div>
+
             <div className="landmark-list">
                 {items.map((item) => {
                     const timestamps = Array.isArray(item.timestamps)
                         ? item.timestamps
                         : [];
+                    const priority = item.match_priority || "low";
 
                     return (
                         <article className="landmark-card" key={item.label}>
-                            {item.best_frame && (
-                                <button
-                                    className="landmark-thumb"
-                                    onClick={() => onSeek(
-                                        item.best_timestamp
-                                        ?? timestamps[0]
-                                        ?? 0,
-                                    )}
-                                    title="Перейти к лучшему кадру"
-                                >
-                                    <img
-                                        src={fileUrl(job.id, item.best_frame)}
-                                        alt={item.label}
-                                        loading="lazy"
-                                    />
-                                </button>
-                            )}
+                            <ClueThumb
+                                job={job}
+                                item={item}
+                                onSeek={onSeek}
+                            />
 
                             <div className="landmark-body">
                                 <div className="landmark-title">
@@ -276,11 +365,35 @@ function DetectionsTab({ job, result, onSeek }) {
                                     </span>
                                 </div>
 
-                                <p className="muted">
-                                    YOLOv8n · уверенность{" "}
-                                    {Math.round(Number(item.mean_confidence || 0) * 100)}%
-                                    {item.is_dynamic ? " · динамический объект" : ""}
-                                </p>
+                                <div className="geo-clue-meta">
+                                    <span className={`clue-priority clue-priority-${priority}`}>
+                                        {PRIORITY_LABELS[priority] || priority}
+                                    </span>
+                                    <span className="muted">
+                                        уверенность{" "}
+                                        {Math.round(Number(item.max_confidence || 0) * 100)}%
+                                    </span>
+                                    {item.best_visibility_fraction != null && (
+                                        <span className="muted">
+                                            видно{" "}
+                                            {Math.round(
+                                                Number(item.best_visibility_fraction) * 100
+                                            )}%
+                                        </span>
+                                    )}
+                                    {item.best_shape_complexity != null && (
+                                        <span className="muted">
+                                            сложность{" "}
+                                            {Number(item.best_shape_complexity).toFixed(1)}
+                                        </span>
+                                    )}
+                                </div>
+
+                                {item.descriptions?.[0] && (
+                                    <p className="muted geo-clue-description">
+                                        {item.descriptions[0]}
+                                    </p>
+                                )}
 
                                 <TimeChips
                                     timestamps={timestamps}
@@ -617,8 +730,8 @@ export default function VisualAnalysisPanel({ job, onSeek }) {
                     <h2>Визуальный анализ</h2>
                     <p className="muted">
                         Сцены, текст на кадрах, семантическая разметка,
-                        YOLOv8n и анонимные лица. Это визуальные улики,
-                        а не подтверждённые координаты.
+                        гео-улики Grounding DINO + SAM2 и анонимные лица.
+                        Это визуальные улики, а не подтверждённые координаты.
                     </p>
                 </div>
 
@@ -658,7 +771,7 @@ export default function VisualAnalysisPanel({ job, onSeek }) {
                 )}
 
                 {tab === "detections" && (
-                    <DetectionsTab job={job} result={result} onSeek={onSeek} />
+                    <GeoCluesTab job={job} result={result} onSeek={onSeek} />
                 )}
 
                 {tab === "segments" && (

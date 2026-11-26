@@ -1,133 +1,84 @@
-"""Детекция объектов YOLOv8n для стадии visual_analysis.
+"""Гео-улики для стадии visual_analysis.
 
-Модуль — тонкая обёртка над objectDetectionService.YoloDetector:
-держит одну ONNX-сессию на процесс, гоняет кадры по одному (модель
-экспортирована с фиксированным batch=1) и собирает уникальные
-классы по всем кадрам.
+Тонкая обёртка над geoCluesService: держит единый формат для стадии
+и сохраняет старые имена функций, которые использовали odometry и
+BEV. YOLO здесь больше нет: детекция заменена на Grounding DINO tiny
+с тайлингом SAHI-стиля, сегментация — на SAM2.1 hiera tiny.
 
-Если onnxruntime или файл модели недоступны, детекция не валит
-стадию: detections остаются пустыми, а причина попадает в
-detector_error.
+Если модели недоступны, кадры получают пустые geo_clues, а причина
+попадает в detector_error. Стадия из-за этого не падает.
 """
 
 from __future__ import annotations
 
 from typing import Callable
 
-from app.services.objectDetectionService.detector import YoloDetector
-
-
-DETECTION_CATEGORY_ORDER = (
-    "people",
-    "transport",
-    "animals",
-    "street",
-    "other",
+from app.services.geoCluesService import (
+    analyze_frames as _analyze_frames,
+    detector_available as _detector_available,
+    detector_error as _detector_error,
+    reset as _reset,
+    status as _status,
+    unique_geo_clues as _unique_geo_clues,
 )
 
 
-DETECTION_CATEGORY = {
-    "person": "people",
-    "bicycle": "transport",
-    "car": "transport",
-    "motorcycle": "transport",
-    "airplane": "transport",
-    "bus": "transport",
-    "train": "transport",
-    "truck": "transport",
-    "boat": "transport",
-    "traffic light": "street",
-    "fire hydrant": "street",
-    "stop sign": "street",
-    "parking meter": "street",
-    "bench": "street",
-    "bird": "animals",
-    "cat": "animals",
-    "dog": "animals",
-    "horse": "animals",
-    "sheep": "animals",
-    "cow": "animals",
-    "elephant": "animals",
-    "bear": "animals",
-    "zebra": "animals",
-    "giraffe": "animals",
-}
-
-
-_DETECTOR: YoloDetector | None = None
-_DETECTOR_ERROR: str | None = None
-
-
 def detector_available() -> bool:
-    """Проверить, удалось ли открыть ONNX-модель YOLO."""
+    """Загружен ли детектор гео-улик."""
 
-    return _detector() is not None
+    return _detector_available()
 
 
 def detector_error() -> str | None:
-    """Вернуть причину, по которой детектор недоступен."""
+    """Причина, по которой детектор недоступен."""
 
-    return _DETECTOR_ERROR
+    return _detector_error()
 
 
 def reset_detector() -> None:
-    """Сбросить кэш сессии — нужно тестам и повторным запускам."""
+    """Сбросить кэш моделей — нужно тестам и повторным запускам."""
 
-    global _DETECTOR, _DETECTOR_ERROR
-    _DETECTOR = None
-    _DETECTOR_ERROR = None
+    _reset()
+
+
+def model_status() -> dict:
+    """Состояние Grounding DINO и SAM2 для отчёта и тестов."""
+
+    return _status()
 
 
 def detect_frames(
     frames: list[dict],
     progress: Callable[[float, str], None] | None = None,
-) -> list[list[dict]]:
-    """Найти объекты на каждом кадре.
+) -> list[dict]:
+    """Найти гео-улики на кадрах.
 
-    Возвращает список, выровненный по входным кадрам: при ошибке
-    конкретного кадра на его месте пустой список.
+    Возвращает список, выровненный по входным кадрам. Для каждого
+    кадра: geo_clues, frame_summary, detections (старый формат),
+    analyzed и error.
     """
 
-    detector = _detector()
+    return _analyze_frames(
+        frames,
+        progress=progress,
+    )
 
-    if detector is None:
-        return [[] for _ in frames]
 
-    results: list[list[dict]] = []
-    total = max(len(frames), 1)
+def unique_geo_clues_from_frames(
+    frames: list[dict],
+) -> list[dict]:
+    """Собрать уникальные гео-улики по всем кадрам."""
 
-    for index, frame in enumerate(frames):
-        if progress is not None:
-            progress(
-                index / total * 100,
-                f"Детекция объектов: кадр {index + 1}/{len(frames)}",
-            )
-
-        path = frame.get("path")
-
-        if not path:
-            results.append([])
-            continue
-
-        try:
-            results.append(detector.detect(path))
-
-        except Exception:
-            results.append([])
-
-    if progress is not None:
-        progress(100, "Детекция объектов завершена")
-
-    return results
+    return _unique_geo_clues(frames)
 
 
 def unique_detections_from_frames(
     frames: list[dict],
 ) -> list[dict]:
-    """Собрать уникальные классы YOLO по всем кадрам.
+    """Старый формат сводки детекций для совместимости.
 
-    Для каждого класса сохраняются число кадров, лучшая уверенность,
-    средняя уверенность, лучший кадр и таймкоды.
+    Новый фронтенд читает unique_geo_clues; старые потребители
+    (и старые job.json) продолжают получать label/confidence/bbox.
     """
 
     collected: dict[str, dict] = {}
@@ -149,11 +100,8 @@ def unique_detections_from_frames(
 
             entry = collected.setdefault(label, {
                 "label": label,
-                "label_ru": label,
-                "category": DETECTION_CATEGORY.get(
-                    label,
-                    "other",
-                ),
+                "label_ru": item.get("label_ru", label),
+                "category": "geo_clue",
                 "is_dynamic": bool(item.get("is_dynamic")),
                 "frame_count": 0,
                 "max_confidence": 0.0,
@@ -196,33 +144,9 @@ def unique_detections_from_frames(
         result.append(entry)
 
     result.sort(key=lambda item: (
-        DETECTION_CATEGORY_ORDER.index(item["category"])
-        if item["category"] in DETECTION_CATEGORY_ORDER
-        else len(DETECTION_CATEGORY_ORDER),
         -item["frame_count"],
         -item["max_confidence"],
         item["label"],
     ))
 
     return result
-
-
-def _detector() -> YoloDetector | None:
-    """Лениво открыть общий детектор YOLO."""
-
-    global _DETECTOR, _DETECTOR_ERROR
-
-    if _DETECTOR is not None:
-        return _DETECTOR
-
-    if _DETECTOR_ERROR is not None:
-        return None
-
-    try:
-        _DETECTOR = YoloDetector()
-
-    except Exception as error:
-        _DETECTOR_ERROR = str(error)[:500]
-        return None
-
-    return _DETECTOR

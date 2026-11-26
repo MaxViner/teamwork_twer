@@ -1,0 +1,130 @@
+.jobs-list {
+    display: grid;
+    gap: 10px;
+    margin-top: 14px;
+}
+
+.job-card {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+    padding: 12px 14px;
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    background: rgba(255, 255, 255, 0.03);
+    cursor: pointer;
+    transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.job-card:hover {
+    border-color: rgba(56, 189, 248, 0.55);
+}
+
+.job-card.is-selected {
+    border-color: #38bdf8;
+    background: rgba(56, 189, 248, 0.08);
+}
+
+.job-card-main {
+    min-width: 0;
+    flex: 1 1 auto;
+}
+
+.job-card-title {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+
+.job-card-title strong {
+    overflow-wrap: anywhere;
+}
+
+.job-card-meta {
+    margin: 4px 0 0;
+    font-size: 12px;
+}
+
+.job-status {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+    color: #e2e8f0;
+    background: rgba(148, 163, 184, 0.25);
+}
+
+.job-status-running,
+.job-status-queued {
+    color: #082f49;
+    background: #7dd3fc;
+}
+
+.job-status-completed {
+    color: #052e16;
+    background: #86efac;
+}
+
+.job-status-partial {
+    color: #422006;
+    background: #fde68a;
+}
+
+.job-status-failed {
+    color: #450a0a;
+    background: #fca5a5;
+}
+
+.job-status-paused {
+    color: #1e1b4b;
+    background: #c7d2fe;
+}
+
+.job-card-actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 8px;
+    flex: 0 0 auto;
+}
+
+.job-action {
+    padding: 6px 10px;
+    border: 1px solid var(--line);
+    border-radius: 9px;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    font-size: 12px;
+    cursor: pointer;
+}
+
+.job-action:hover {
+    border-color: #38bdf8;
+}
+
+.job-action-danger {
+    color: #fca5a5;
+    border-color: rgba(248, 113, 113, 0.45);
+}
+
+.job-action-danger:hover {
+    border-color: #f87171;
+}
+
+@media (max-width: 720px) {
+    .job-card {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .job-card-actions {
+        justify-content: flex-start;
+    }
+}

@@ -44,6 +44,8 @@ def collect_frames(stages: dict) -> list[dict]:
                 "objects": [],
                 "descriptors": {},
                 "metrics": {},
+                "geo_clues": [],
+                "frame_summary": None,
                 "detections": [],
             })
 
@@ -61,6 +63,12 @@ def collect_frames(stages: dict) -> list[dict]:
 
             if isinstance(frame.get("detections"), list):
                 item["detections"] = frame["detections"]
+
+            if isinstance(frame.get("geo_clues"), list):
+                item["geo_clues"] = frame["geo_clues"]
+
+            if frame.get("frame_summary"):
+                item["frame_summary"] = frame["frame_summary"]
 
     return [
         collected[key]

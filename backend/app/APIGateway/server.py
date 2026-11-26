@@ -12,7 +12,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 
-from app.APIGateway.executor import POOL
+from app.APIGateway.executor import PAUSED_JOBS, POOL
 from app.APIGateway.jobs import (
     DATA,
     load_job,
@@ -21,10 +21,15 @@ from app.APIGateway.jobs import (
 from app.APIGateway.endpoints import (
     ai_router,
     artifact_router,
+    geo_research_router,
     health_router,
     job_router,
     observation_router,
     report_router,
+)
+from app.APIGateway.test_endpoints import (
+    geo_clue_router,
+    test_router,
 )
 
 
@@ -61,6 +66,23 @@ def _recover_interrupted_jobs() -> None:
     for path in DATA.glob("*/job.json"):
         job = load_job(path.parent.name)
 
+        # Пауза переживает перезапуск backend: не превращаем её
+        # в «прерванный запуск» и не требуем повторного этапа.
+        if (
+            job.get("status") == "paused"
+            or job.get("pause_requested")
+        ):
+            PAUSED_JOBS.add(path.parent.name)
+            job["status"] = "paused"
+            job["progress"] = "Пауза"
+
+            for stage in job.get("stages", {}).values():
+                if stage.get("status") == "running":
+                    stage["status"] = "paused"
+                    stage["progress_message"] = "Пауза"
+
+            save_job(job)
+            continue
 
         if job.get("status") not in (
             "queued",
@@ -68,13 +90,11 @@ def _recover_interrupted_jobs() -> None:
         ):
             continue
 
-
         job["status"] = "partial"
         job["progress"] = (
             "Прошлый запуск был прерван. "
             "Повторите нужный этап."
         )
-
 
         for stage in job.get("stages", {}).values():
             if stage.get("status") in (
@@ -83,7 +103,6 @@ def _recover_interrupted_jobs() -> None:
             ):
                 stage["status"] = "failed"
                 stage["error"] = "Запуск прерван."
-
 
         save_job(job)
 
@@ -101,3 +120,10 @@ appServer.include_router(artifact_router)
 appServer.include_router(observation_router)
 appServer.include_router(report_router)
 appServer.include_router(ai_router)
+appServer.include_router(geo_research_router)
+
+# Тестовые роутеры подключены всегда, но сами отдают 404, пока
+# ENABLE_TEST_ENDPOINTS не равен 1. Так контракт скрыт, а тесты
+# могут проверить поведение.
+appServer.include_router(test_router)
+appServer.include_router(geo_clue_router)

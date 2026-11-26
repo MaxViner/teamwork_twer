@@ -58,7 +58,7 @@ export const UPLOAD_TOGGLES = [
     {
         name: "visual_analysis",
         title: "Анализировать кадры",
-        description: "Метрики, семантика SegFormer, объекты YOLOv8n и анонимные лица за один проход.",
+        description: "Метрики, семантика SegFormer, гео-улики Grounding DINO + SAM2 и анонимные лица за один проход.",
     },
 
 
