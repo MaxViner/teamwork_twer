@@ -1,0 +1,205 @@
+/* Страница /map — карта «привидений» Тверской губернии. */
+
+.ghost-map {
+    padding: 20px;
+}
+
+.ghost-map__head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 16px;
+}
+
+.ghost-map__head h2 {
+    margin: 0 0 6px;
+}
+
+.ghost-map__head p {
+    margin: 0;
+    max-width: 760px;
+    line-height: 1.5;
+}
+
+.ghost-map__notice {
+    margin: 12px 0;
+    padding: 10px 14px;
+    border: 1px solid var(--success-border);
+    border-radius: 12px;
+    background: var(--success-soft);
+    color: var(--text-secondary);
+    font-size: 13px;
+}
+
+.ghost-map__layout {
+    display: grid;
+    grid-template-columns: minmax(280px, 340px) 1fr;
+    gap: 16px;
+    align-items: start;
+}
+
+.ghost-map__side {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    min-width: 0;
+}
+
+.ghost-map__side .dev-card {
+    margin: 0;
+}
+
+.ghost-map__side .dev-card > button {
+    width: 100%;
+    margin-top: 8px;
+}
+
+.ghost-map__side .dev-field input[type="range"] {
+    width: 100%;
+}
+
+.ghost-map__stage {
+    position: relative;
+    min-width: 0;
+}
+
+.ghost-map__canvas {
+    position: relative;
+    width: 100%;
+    height: min(78vh, 860px);
+    min-height: 460px;
+    border: 1px solid var(--line-strong);
+    border-radius: 14px;
+    overflow: hidden;
+    background: var(--bg-soft);
+    z-index: 0;
+}
+
+/* Статус и прогресс */
+
+.ghost-map__status {
+    margin-top: 16px;
+    padding-top: 14px;
+    border-top: 1px solid var(--line);
+}
+
+.ghost-map__status-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 8px;
+    font-size: 13px;
+    color: var(--text-secondary);
+}
+
+.ghost-map__bar {
+    position: relative;
+    height: 8px;
+    margin-bottom: 12px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.08);
+    overflow: hidden;
+}
+
+.ghost-map__bar span {
+    display: block;
+    height: 100%;
+    border-radius: inherit;
+    background: linear-gradient(
+        90deg,
+        var(--accent),
+        var(--accent-strong)
+    );
+    transition: width 0.35s ease;
+}
+
+.ghost-map__status .dev-kv {
+    margin-top: 12px;
+}
+
+/* Popup внутри Leaflet */
+
+.ghost-map__popup-title {
+    margin-bottom: 6px;
+    font-weight: 600;
+    font-size: 14px;
+    color: var(--text);
+}
+
+.ghost-map__popup-button {
+    margin-top: 10px;
+    width: 100%;
+    padding: 6px 10px;
+    font-size: 12px;
+}
+
+/* Leaflet на тёмной теме */
+
+.ghost-map .leaflet-container {
+    background: #0d0f12;
+    font: inherit;
+}
+
+.ghost-map .leaflet-popup-content-wrapper,
+.ghost-map .leaflet-popup-tip {
+    background: var(--paper-strong);
+    color: var(--text);
+    box-shadow: var(--shadow-md);
+}
+
+.ghost-map .leaflet-popup-content {
+    margin: 12px 14px;
+    font-size: 13px;
+}
+
+.ghost-map .leaflet-popup-content .muted {
+    margin: 2px 0;
+}
+
+.ghost-map .leaflet-container a.leaflet-popup-close-button {
+    color: var(--muted);
+}
+
+.ghost-map .leaflet-bar,
+.ghost-map .leaflet-control-scale-line {
+    border-color: var(--line-strong);
+    background: rgba(20, 22, 26, 0.86);
+    color: var(--text-secondary);
+}
+
+.ghost-map .leaflet-bar a {
+    background: transparent;
+    color: var(--text);
+    border-bottom-color: var(--line);
+}
+
+.ghost-map .leaflet-bar a:hover {
+    background: rgba(255, 255, 255, 0.08);
+}
+
+.ghost-map .leaflet-control-attribution {
+    background: rgba(12, 14, 17, 0.72);
+    color: var(--muted);
+}
+
+.ghost-map .leaflet-control-attribution a {
+    color: var(--text-secondary);
+}
+
+@media (max-width: 900px) {
+    .ghost-map {
+        padding: 12px;
+    }
+
+    .ghost-map__layout {
+        grid-template-columns: 1fr;
+    }
+
+    .ghost-map__canvas {
+        height: 60vh;
+        min-height: 360px;
+    }
+}

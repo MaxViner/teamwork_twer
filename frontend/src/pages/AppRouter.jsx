@@ -8,6 +8,7 @@ import AiChatTestPage from "./dev/AiChatTestPage.jsx";
 import VideoLabPage from "./dev/VideoLabPage.jsx";
 import OdometryLabPage from "./dev/OdometryLabPage.jsx";
 import GeoResearchPage from "./dev/GeoResearchPage.jsx";
+import GhostMapPage from "./GhostMapPage.jsx";
 import NotFoundPage from "./NotFoundPage.jsx";
 
 export default function AppRoutes() {
@@ -15,6 +16,8 @@ export default function AppRoutes() {
         <BrowserRouter>
             <Routes>
                 <Route path="/" element={<VideoAnalysisApp />} />
+
+                <Route path="/map" element={<GhostMapPage />} />
 
 
                 <Route path="/dev" element={<DevLayout />}>

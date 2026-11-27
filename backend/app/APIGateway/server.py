@@ -22,6 +22,7 @@ from app.APIGateway.endpoints import (
     ai_router,
     artifact_router,
     geo_research_router,
+    ghost_map_router,
     health_router,
     job_router,
     observation_router,
@@ -124,6 +125,7 @@ appServer.include_router(observation_router)
 appServer.include_router(report_router)
 appServer.include_router(ai_router)
 appServer.include_router(geo_research_router)
+appServer.include_router(ghost_map_router)
 
 # Тестовые роутеры подключены всегда, но сами отдают 404, пока
 # ENABLE_TEST_ENDPOINTS не равен 1. Так контракт скрыт, а тесты
