@@ -725,6 +725,7 @@ def device_evidence(device: str | None) -> list[dict]:
 def summarize(
     evidence: list[dict],
     profile: dict,
+    duration: float = 0.0,
 ) -> dict:
     counts = Counter(item["kind"] for item in evidence)
 
@@ -822,6 +823,12 @@ def summarize(
         country_candidates,
     )
 
+    # Байесовская агрегация слабых улик: лог-правдоподобие по
+    # ортогональным каналам вместо среднего confidence.
+    from app.services.weakCluesService import aggregation as weak_aggregation
+
+    aggregation = weak_aggregation.aggregate(evidence, duration)
+
     summary = (
         f"Собрано географических признаков: {len(evidence)}. "
         f"GPS: {counts.get('coordinates', 0)}; "
@@ -829,7 +836,11 @@ def summarize(
         f"места: {counts.get('place_mention', 0)}; "
         f"бренды: {counts.get('business', 0)}; "
         f"ссылки: {counts.get('link', 0)}; "
-        f"телефоны: {counts.get('phone', 0)}."
+        f"телефоны: {counts.get('phone', 0)}. "
+        f"Ортогональных каналов: "
+        f"{aggregation.get('orthogonal_channels', 0)}; "
+        f"дорожных кандидатов: "
+        f"{aggregation.get('road_candidate_count', 0)}."
     )
 
     return {
@@ -838,6 +849,12 @@ def summarize(
         "place_candidates": place_candidates,
         "search_queries": search_queries,
         "evidence_counts": dict(counts),
+        "aggregation": aggregation,
+        "road_candidates": aggregation.get("road_candidates", []),
+        "orthogonal_channels": aggregation.get(
+            "orthogonal_channels",
+            0,
+        ),
         "profile": profile,
         "summary": summary,
         "limitations": (

@@ -21,6 +21,7 @@ from app.services.geoInspectService.geo import (
     extract_text_evidence,
     summarize,
 )
+from app.services.weakCluesService import collect_weak_clues
 from app.utils.observations import observation
 
 
@@ -81,6 +82,10 @@ def extract_location_evidence(
     evidence.extend(_scene_evidence(stages, duration))
     evidence.extend(_structure_evidence(stages, duration))
 
+    progress(65, "Добавляю слабые улики: фенология, птицы, столбы")
+
+    evidence.extend(collect_weak_clues(stages, duration))
+
     evidence = _merge(evidence)
     evidence = _limit(evidence)
 
@@ -94,7 +99,7 @@ def extract_location_evidence(
     progress(75, "Формирую локационное досье")
 
     profile = _profile(stages)
-    dossier = summarize(evidence, profile)
+    dossier = summarize(evidence, profile, duration)
 
     observations = _build_observations(
         evidence,

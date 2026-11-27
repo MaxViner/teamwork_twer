@@ -29,6 +29,7 @@ from app.services.audioService.sound_events import (
     model_note,
     summarize,
 )
+from app.services.weakCluesService import birdnet, infrastructure
 
 
 AUDIO_RATE = 16000
@@ -72,7 +73,7 @@ def extract_audio_structure(
     sound_model_note: str | None = None
 
     if model_available():
-        progress(50, "Распознаю звуковые события")
+        progress(45, "Распознаю звуковые события")
 
         try:
             waveform = _load_waveform(audio_path)
@@ -86,8 +87,51 @@ def extract_audio_structure(
     else:
         sound_model_note = model_note()
 
+    # 3. Птицы (BirdNET) и класс дорожного шума. BirdNET требует
+    # 48 кГц, поэтому отдельный WAV извлекается только при наличии
+    # модели — иначе лишняя работа и лишний файл.
+    bird_species: list[dict] = []
+    bird_clues: list[dict] = []
+    bird_model_note: str | None = None
+
+    if birdnet.model_available():
+        progress(70, "Распознаю птиц (BirdNET)")
+
+        try:
+            bird_path = storage.run_path("audio_birdnet.wav")
+            command([
+                "ffmpeg", "-nostdin", "-y", "-v", "error",
+                "-i", str(video),
+                "-map", "0:a:0",
+                "-vn",
+                "-ac", "1",
+                "-ar", "48000",
+                "-c:a", "pcm_s16le",
+                str(bird_path),
+            ])
+            bird_result = birdnet.analyze_audio(bird_path)
+            bird_species = bird_result.get("detections") or []
+            bird_clues = birdnet.species_clues(
+                bird_species,
+                float(prepared.get("duration") or 0.0),
+            )
+            bird_model_note = bird_result.get("note")
+        except Exception as error:  # noqa: BLE001
+            bird_model_note = (
+                f"BirdNET недоступен: {str(error)[:200]}"
+            )
+    else:
+        bird_model_note = birdnet.model_note()
+
+    road_class = infrastructure.classify_road_noise(profile)
+
     progress(90, "Формирую наблюдения")
-    observations = _build_observations(sound_summary, profile)
+    observations = _build_observations(
+        sound_summary,
+        profile,
+        bird_clues,
+        road_class,
+    )
 
     progress(100, "Аудиальный анализ завершён")
 
@@ -95,6 +139,13 @@ def extract_audio_structure(
         "sound_events": sound_events,
         "sound_summary": sound_summary,
         "profile": profile,
+        "bird_species": bird_species,
+        "bird_clues": bird_clues,
+        "bird_model_note": bird_model_note,
+        "road_noise": (
+            {"road_class": road_class}
+            if road_class else None
+        ),
         "observations": observations,
         "model": "yamnet-onnx" if sound_events else None,
         "window_seconds": WINDOW_SECONDS,
@@ -214,8 +265,10 @@ def _load_waveform(audio_path: Path) -> np.ndarray:
 def _build_observations(
     sound_summary: list[dict],
     profile: dict,
+    bird_clues: list[dict] | None = None,
+    road_class: str | None = None,
 ) -> list[dict]:
-    """Одно сводное observation на тип звука + одно на профиль."""
+    """Одно сводное observation на тип звука + профиль, птицы, дорога."""
     observations: list[dict] = []
 
     for item in sound_summary[:8]:
@@ -267,6 +320,47 @@ def _build_observations(
                     "environment": profile.get("environment"),
                     "silence_ratio": profile.get("silence_ratio"),
                     "loud_ratio": profile.get("loud_ratio"),
+                },
+            )
+        )
+
+    for item in (bird_clues or [])[:6]:
+        details = item.get("details") or {}
+
+        observations.append(
+            observation(
+                source="audio_bird",
+                start=0.0,
+                end=0.0,
+                text=item.get("text") or "BirdNET: вид птицы",
+                extractor="birdnet-onnx",
+                data={
+                    "kind": "bird_species",
+                    "scientific": details.get("scientific"),
+                    "label_ru": details.get("label_ru"),
+                    "months": details.get("months"),
+                    "narrow_range": details.get("narrow_range"),
+                    "confidence": item.get("confidence"),
+                    "requires_review": True,
+                },
+            )
+        )
+
+    if road_class:
+        observations.append(
+            observation(
+                source="audio_road",
+                start=0.0,
+                end=0.0,
+                text=(
+                    f"Дорожный шум по акустике: {road_class}. "
+                    "Это класс дороги, а не её номер."
+                ),
+                extractor="numpy-rms-spectrum",
+                data={
+                    "kind": "road_noise",
+                    "road_class": road_class,
+                    "requires_review": True,
                 },
             )
         )

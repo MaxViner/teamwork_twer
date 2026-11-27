@@ -37,6 +37,7 @@ from app.services.visualAnalysisService.metrics import (
     describe_metrics,
     observation_text,
 )
+from app.services.weakCluesService import visual as weak_visual
 from app.storage import StorageService
 from app.utils.observations import observation
 
@@ -219,6 +220,17 @@ def extract_visual_analysis(
 
     timings["faces"] = _elapsed_ms(started)
 
+    started = time.perf_counter()
+    progress(95, "Фенология и стек повторяющихся объектов")
+
+    weak = weak_visual.analyze(
+        analyzed,
+        storage,
+        created_at=_created_at(stages),
+    )
+
+    timings["weak_clues"] = _elapsed_ms(started)
+
     for frame in analyzed:
         frame.pop("path", None)
 
@@ -281,6 +293,10 @@ def extract_visual_analysis(
             if frame.get("frame_summary")
         ],
         "people": people,
+        "phenology": weak.get("phenology"),
+        "stacked_readings": weak.get("stacked_readings") or [],
+        "km_post_clues": weak.get("km_post_clues") or [],
+        "weak_clue_errors": weak.get("stack_errors") or [],
         "observations": observations,
         "counts": counts,
         "timings_ms": timings,
@@ -483,6 +499,15 @@ def _key(frame: dict) -> str:
         return str(artifact)
 
     return f"t:{round(float(frame.get('timestamp') or 0), 3)}"
+
+
+def _created_at(stages: dict) -> str | None:
+    """Дата создания файла из стадии metadata (если уже есть)."""
+
+    result = stages.get("metadata", {}).get("result", {})
+    value = result.get("created_at")
+
+    return str(value) if value else None
 
 
 def _by_artifact(
